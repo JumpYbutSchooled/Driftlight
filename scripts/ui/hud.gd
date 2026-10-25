@@ -143,7 +143,7 @@ func _draw() -> void:
 
 	if prompt != "":
 		_text(Vector2(0, vs.y - 150), prompt, 22, UI.GOLD, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	var keys := "W/S pitch   A/D turn   Q/E roll   R/F throttle   X brake   SHIFT boost   mouse look   click fire   right-click select   1 approach   2 orbit   3 warp to   5 cruise   G use   O collect ore   V scan   SPACE warp   C cursor   wheel zoom   I cargo   L fitting   N/M maps   F1 photo"
+	var keys := "W/S pitch   Q/E turn   A/D roll   R/F throttle   X brake   SHIFT boost   mouse look   click fire   right-click select   1 approach   2 orbit   3 warp to   5 cruise   G use   O collect ore   V scan   SPACE warp   C cursor   wheel zoom   I cargo   L fitting   N/M maps   F1 photo"
 	_text(Vector2(0, vs.y - 20), keys, 14, Color(UI.MUTED, 0.75), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 	if main.command:
 		_text(Vector2(0, vs.y - 44), "CURSOR FREE  -  click to select  -  C or ESC for mouse look", 14, Color(UI.GOLD, 0.85),

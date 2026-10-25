@@ -1,5 +1,5 @@
 extends Node3D
-## The player's ship in 3D. The keys turn it (A/D turn, W/S pitch, Q/E roll, with momentum: see _turn).
+## The player's ship in 3D. The keys turn it (Q/E turn, W/S pitch, A/D roll, with momentum: see _turn).
 ## R/F raise/lower the throttle, X brakes, SHIFT boosts. Each gun
 ## slot is a turret (on a pod, on the deck, under the keel or out on a flank, depending on the ship) that
 ## swings round on its own to track whatever the crosshair is on; a turret only fires once it's on target,
@@ -21,7 +21,7 @@ const GRIP := 0.5  # how fast the flight computer damps sideways drift (times to
 const TURN_MULT := 0.45  # top turn rate (rad/s) is this times the ship's turn stat; rolling is quicker
 const SPIN_UP := 1.3  # turn rate gained per second, as a fraction of the top turn rate
 const BOOST_MULT := 1.8
-const BOOST_DRAIN := 35.0  # energy per second
+const BOOST_DRAIN := 8.0  # energy per second (a full tank boosts for a good while)
 const BOLT_SPEED_MULT := 2.5  # bolts fly this much faster than the weapon numbers say (over half the time: a bit more range)
 const FIRE_RATE_MULT := 1.5  # and the guns cycle this much quicker
 const BOLT_RANGE := 8000.0  # metres: every weapon reaches as far as you can see to aim

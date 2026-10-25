@@ -179,15 +179,23 @@ func _run() -> void:
 	p.throttle = 1.0
 	p.vel = p.forward() * 30.0
 	var t0 := Time.get_ticks_msec()
+	while main.mode != "docking" and Time.get_ticks_msec() - t0 < 30000:
+		await get_tree().process_frame
+	await _secs(0.9)
+	await _shot("02e2_docking_fade")
 	while main.mode != "docked" and Time.get_ticks_msec() - t0 < 30000:
 		await get_tree().process_frame
 	print("docking by flying in: mode %s after %.1f s" % [main.mode, (Time.get_ticks_msec() - t0) / 1000.0])
 	await _secs(0.5)
 	await _shot("02f_docked")
 	main.close_panel()
-	await _secs(1.5)
-	print("undocked: mode %s, %.0f m from the pad, facing out %.2f, moving %.1f m/s" % [main.mode, p.position.distance_to(bay.pad),
-		p.forward().dot(bay.out), p.vel.length()])
+	await _secs(2.6)
+	await _shot("02f2_startup")
+	t0 = Time.get_ticks_msec()
+	while main.mode != "fly" and Time.get_ticks_msec() - t0 < 15000:
+		await get_tree().process_frame
+	print("undocked: mode %s after %.1f s of startup, %.0f m from the pad, facing out %.2f, moving %.1f m/s" % [main.mode,
+		(Time.get_ticks_msec() - t0) / 1000.0 + 2.6, p.position.distance_to(bay.pad), p.forward().dot(bay.out), p.vel.length()])
 	await _shot("02g_undocked")
 	# the docking autopilot from behind the station: it has to go round, line up and fly in
 	p.position = st.pos - bay.out * 1500.0 + Vector3(0, 100, 0)
@@ -212,6 +220,9 @@ func _run() -> void:
 		(Time.get_ticks_msec() - t0) / 1000.0, p.position.distance_to(bay.pad)])
 	if main.mode == "docked":
 		main.close_panel()
+		t0 = Time.get_ticks_msec()
+		while main.mode != "fly" and Time.get_ticks_msec() - t0 < 15000:
+			await get_tree().process_frame
 	await _secs(0.5)
 	# zoomed right out
 	main._zoom_to = 60.0

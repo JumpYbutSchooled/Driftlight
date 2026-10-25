@@ -36,10 +36,10 @@ func _ready() -> void:
 		add_child(mi)
 		_layers.append(mi)
 	_streaks = CPUParticles3D.new()
-	_streaks.amount = 160
+	_streaks.amount = 360
 	_streaks.lifetime = 0.5
 	_streaks.local_coords = true
-	_streaks.mesh = Models.streak_mesh(0.25, 30.0)
+	_streaks.mesh = Models.streak_mesh(0.4, 40.0)
 	_streaks.particle_flag_align_y = true
 	_streaks.emission_shape = CPUParticles3D.EMISSION_SHAPE_SPHERE_SURFACE
 	_streaks.direction = Vector3(0, 0, 1)
@@ -72,7 +72,7 @@ func _process(_delta: float) -> void:
 		# the cylinder's height runs along local Y: lay it along -Z (forward) with the front (+Y) ahead
 		mi.basis = Basis(Vector3.RIGHT, -PI / 2.0) * Basis.from_scale(Vector3(r, length, r))
 		var m: ShaderMaterial = mi.material_override
-		m.set_shader_parameter("intensity", power * [0.7, 0.45, 0.28][i])
+		m.set_shader_parameter("intensity", power * [1.0, 0.7, 0.45][i])
 		m.set_shader_parameter("tint", tint)
 	_streaks.emission_sphere_radius = radius * 1.2
 	_streaks.position = Vector3(0, 0, -radius * 6.0)

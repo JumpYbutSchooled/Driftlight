@@ -186,9 +186,10 @@ const SHIPS := {
 }
 # Each weapon is one gun pod's worth: build or buy one per slot you want to fill (Blasters are free).
 # pellets/spread = shotgun, pierce = passes through targets, homing = turn rate toward pirates, slow = seconds slowed
-const WEAPON_ORDER := ["twin_blasters", "mining_lasers", "scatter_guns", "pulse_cannons", "ion_repeaters",
+# These are the Mk I weapons; _expand_weapons() adds a Mk II and Mk III of each to WEAPONS (see WEAPON_TIERS).
+const WEAPON_BASE_ORDER := ["twin_blasters", "mining_lasers", "scatter_guns", "pulse_cannons", "ion_repeaters",
 	"cryo_projectors", "seeker_darts", "rail_drivers", "deep_core_drills", "nova_lances", "prism_cannons"]
-const WEAPONS := {
+const WEAPON_BASE := {
 	"twin_blasters": {"name": "Blaster", "damage": 6.0, "rate": 4.0, "speed": 950.0, "mining": 1.0, "life": 1.1,
 		"color": Color("ffe066"), "size": Vector2(2, 6), "cost": {}, "desc": "The standard gun pod. Free and unlimited - every empty slot has one."},
 	"mining_lasers": {"name": "Mining Lasers", "damage": 3.0, "rate": 7.0, "speed": 1100.0, "mining": 2.2, "life": 0.7,
@@ -221,6 +222,16 @@ const WEAPONS := {
 		"pellets": 3, "spread": 10.0, "pierce": 1, "color": Color("ff5fa2"), "size": Vector2(3, 8),
 		"cost": {"nyxium": 60, "prismium": 30}, "desc": "Split a beam of Prismium into three piercing rays."},
 }
+
+# Three marks of every weapon. Each mark up hits harder, fires faster and mines better, takes far more
+# materials to build, and uses up one of the mark below it from your stores (the free Blaster aside).
+const WEAPON_TIERS := [
+	{"suffix": "", "damage": 1.0, "rate": 1.0, "mining": 1.0, "cost": 1.0},
+	{"suffix": " Mk II", "damage": 1.45, "rate": 1.12, "mining": 1.35, "cost": 3.0},
+	{"suffix": " Mk III", "damage": 2.1, "rate": 1.25, "mining": 1.8, "cost": 8.0},
+]
+var WEAPONS := {}  # every weapon, all three marks: Mk I under its base id, then "<id>_mk2" and "<id>_mk3"
+var WEAPON_ORDER := []
 
 const MODULE_ORDER := ["cargo_pod", "cargo_bay", "shield_booster", "shield_capacitor", "hull_plating", "bulkheads",
 	"afterburner", "gyro", "boost_cells", "tractor_beam", "repair_nanites", "mining_amp", "overcharger", "targeting_cpu",
@@ -346,16 +357,52 @@ var route_target := -1
 var gen_ms := 0
 
 
+func _init() -> void:
+	_expand_weapons()
+
+
+## WEAPONS: every base weapon as Mk I, plus a Mk II and Mk III built from the mark below.
+func _expand_weapons() -> void:
+	for id in WEAPON_BASE_ORDER:
+		var base: Dictionary = WEAPON_BASE[id]
+		var prev := ""
+		for t in WEAPON_TIERS.size():
+			var tier: Dictionary = WEAPON_TIERS[t]
+			var wid: String = id if t == 0 else "%s_mk%d" % [id, t + 1]
+			var w: Dictionary = base.duplicate(true)
+			w["tier"] = t + 1
+			w["base"] = id
+			w.name = base.name + tier.suffix
+			w.damage = base.damage * tier.damage
+			w.rate = base.rate * tier.rate
+			w.mining = base.mining * tier.mining
+			w.size = Vector2(base.size) * (1.0 + 0.15 * t)
+			w.color = Color(base.color).lightened(0.12 * t)
+			if t > 0:
+				var cost := {}
+				for k in base.cost:
+					cost[k] = ceili(base.cost[k] * tier.cost)
+				if base.cost.is_empty():  # the Blaster (free at Mk I)
+					cost = {"corrite": 60} if t == 1 else {"corrite": 240, "ferrox": 60}
+				if id != BLASTER or t > 1:
+					cost["w:" + prev] = 1
+				w.cost = cost
+				w.desc = "%s Mark %s: harder hitting and faster. Built from a %s." % [base.desc, ["I", "II", "III"][t],
+					WEAPONS[prev].name]
+			WEAPONS[wid] = w
+			WEAPON_ORDER.append(wid)
+			prev = wid
+
 func _ready() -> void:
-	# the user's layout: W/S pitch the nose, R/F work the throttle
+	# the user's layout: W/S pitch the nose, Q/E turn, A/D roll, R/F work the throttle
 	_key("move_up", [KEY_R])
 	_key("move_down", [KEY_F])
-	_key("yaw_left", [KEY_A, KEY_LEFT])
-	_key("yaw_right", [KEY_D, KEY_RIGHT])
+	_key("yaw_left", [KEY_Q, KEY_LEFT])
+	_key("yaw_right", [KEY_E, KEY_RIGHT])
 	_key("pitch_up", [KEY_W, KEY_UP])
 	_key("pitch_down", [KEY_S, KEY_DOWN])
-	_key("roll_left", [KEY_Q])
-	_key("roll_right", [KEY_E])
+	_key("roll_left", [KEY_A])
+	_key("roll_right", [KEY_D])
 	_key("warp_menu", [KEY_SPACE])
 	_key("galaxy_map", [KEY_M])
 	_key("system_map", [KEY_N])
@@ -812,6 +859,8 @@ func spice_stock(l: Dictionary, sys: Dictionary) -> Array:
 func item_name(id: String) -> String:
 	if id == "credits":
 		return "Credits"
+	if id.begins_with("w:"):
+		return WEAPONS[id.substr(2)].name
 	if ORES.has(id):
 		return ORES[id].name
 	if SPICES.has(id):
@@ -822,6 +871,8 @@ func item_name(id: String) -> String:
 func item_color(id: String) -> Color:
 	if id == "credits":
 		return Color("ffd24a")
+	if id.begins_with("w:"):
+		return WEAPONS[id.substr(2)].color
 	if ORES.has(id):
 		return ORES[id].color
 	if SPICES.has(id):
@@ -829,9 +880,12 @@ func item_color(id: String) -> Color:
 	return Color.WHITE
 
 
+## How many you have of a cost item: credits, a material, a spice, or ("w:<id>") a weapon in your stores.
 func have(id: String) -> int:
 	if id == "credits":
 		return credits
+	if id.begins_with("w:"):
+		return weapon_stock.get(id.substr(2), 0)
 	if ORES.has(id):
 		return materials.get(id, 0)
 	return spices.get(id, 0)
@@ -840,6 +894,8 @@ func have(id: String) -> int:
 func give(id: String, n: int) -> void:
 	if id == "credits":
 		credits += n
+	elif id.begins_with("w:"):
+		weapon_stock[id.substr(2)] = weapon_stock.get(id.substr(2), 0) + n
 	elif ORES.has(id):
 		materials[id] = materials.get(id, 0) + n
 	else:
@@ -1031,9 +1087,14 @@ func build(kind: String, id: String) -> bool:
 ## materials and spices, with a hefty markup. Rich pilots can skip the grind.
 func market_price(kind: String, id: String) -> int:
 	var total := 0
-	for k in build_cost(kind, id):
-		var each: int = ORES[k].value if ORES.has(k) else [30, 80, 200, 500][SPICES[k].rarity]
-		total += each * build_cost(kind, id)[k]
+	var cost := build_cost(kind, id)
+	for k in cost:
+		var each := 0
+		if k.begins_with("w:"):
+			each = roundi(market_price("weapon", k.substr(2)) / MARKET_MARKUP)  # the mark below, at its own worth
+		else:
+			each = ORES[k].value if ORES.has(k) else [30, 80, 200, 500][SPICES[k].rarity]
+		total += each * cost[k]
 	return maxi(50, roundi(total * MARKET_MARKUP / 10.0) * 10)
 
 

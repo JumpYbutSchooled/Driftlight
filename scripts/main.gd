@@ -2,7 +2,7 @@ extends Node3D
 ## Runs the 3D game: title screen, building each location, the mouse-aim camera, warping and gates,
 ## saving, and all the UI.
 ##
-## Controls: W/S pitch, A/D turn, Q/E roll, R/F throttle, SHIFT boost, X brake. The mouse swings the
+## Controls: W/S pitch, Q/E turn, A/D roll, R/F throttle, SHIFT boost, X brake. The mouse swings the
 ## camera round the ship (it never steers); the gun turrets swivel to whatever the crosshair in the middle
 ## of the screen is on, and left click fires (a turret whose shot would pass through your own hull won't).
 ## Right-click selects what's under the crosshair; with something selected 1 approaches, 2 orbits, 3 warps
@@ -44,6 +44,7 @@ const SystemMap = preload("res://scripts/ui/system_map.gd")
 const StationUI = preload("res://scripts/ui/station_ui.gd")
 const InventoryUI = preload("res://scripts/ui/inventory_ui.gd")
 const Fitting = preload("res://scripts/ui/fitting.gd")
+const DockScreen = preload("res://scripts/ui/dock_screen.gd")
 const DebugUI = preload("res://scripts/ui/debug_ui.gd")
 const Confirm = preload("res://scripts/ui/confirm.gd")
 const Title = preload("res://scripts/ui/title.gd")
@@ -108,6 +109,7 @@ var system_map
 var station_ui
 var inventory
 var fitting
+var dock_screen  # the black screen and startup sequence round docking
 var fields := []  # ore fields here: {"c": centre, "r": reach} (bolts only check rocks near one)
 var _group_cache := {}
 var _group_frame := -1
@@ -159,6 +161,7 @@ var _wormhole_armed := true
 var _dock_armed := true  # false after undocking until you've left the docking zone
 var _docked_bay := {}  # the bay you're docked in (you undock onto its pad)
 var _gate_bay := {}  # the stargate you just flew into (it fires you down its barrel)
+var _bay_warned := 0  # when we last said you can't warp in a docking bay (msec)
 var _rush := Vector3.ZERO  # in a jump, how far the world has streamed away behind you (or, arriving, sits ahead)
 var _rush_v := 0.0
 var _pirate_timer := -1.0
@@ -229,6 +232,7 @@ func _ready() -> void:
 	warp_menu = _ui(root, WarpMenu.new())
 	system_map = _ui(root, SystemMap.new())
 	galaxy_map = _ui(root, GalaxyMap.new())
+	dock_screen = _ui(root, DockScreen.new())  # under the station menus, over everything else
 	station_ui = _ui(root, StationUI.new())
 	inventory = _ui(root, InventoryUI.new())
 	fitting = _ui(root, Fitting.new())
@@ -362,7 +366,7 @@ func start_new_game() -> void:
 		Game.admin_fill()
 	_begin(0, 0)
 	Game.say("Welcome aboard the Wren! You have nothing but your ship. Go mine some Corrite.", Color("9fd3ff"))
-	Game.say("W/S pitch, A/D turn, Q/E roll, R/F throttle. The mouse looks around, click to fire. Hold SPACE to warp to the Core Belt.", Color("9fd3ff"))
+	Game.say("W/S pitch, Q/E turn, A/D roll, R/F throttle. The mouse looks around, click to fire. Hold SPACE to warp to the Core Belt.", Color("9fd3ff"))
 	Game.save_game()
 
 
@@ -386,6 +390,7 @@ func _begin(sys_id: int, loc_i: int) -> void:
 
 
 func quit_to_title() -> void:
+	dock_screen.reset()
 	Game.save_game()
 	close_maps()
 	close_inventory()
@@ -411,7 +416,7 @@ func _process(delta: float) -> void:
 	if not get_tree().paused:
 		if warp_menu.visible:
 			want_mouse = Input.MOUSE_MODE_CAPTURED
-		elif mode in ["fly", "warp", "dead"] and not cursor_free():
+		elif mode in ["fly", "warp", "dead", "docking", "launching"] and not cursor_free():
 			want_mouse = Input.MOUSE_MODE_CAPTURED
 	if Input.mouse_mode != want_mouse:
 		Input.mouse_mode = want_mouse
@@ -435,6 +440,10 @@ func _process(delta: float) -> void:
 	_aim_raycast()
 
 	var holding: bool = mode == "fly" and Input.is_action_pressed("warp_menu")
+	if holding and in_bay():
+		holding = false  # no warp menu inside a docking bay
+		if Input.is_action_just_pressed("warp_menu"):
+			_bay_blocks()
 	if not holding:
 		_menu_latch = false
 	var want_menu: bool = force_warp_menu or (holding and not _menu_latch)
@@ -476,7 +485,7 @@ func _process(delta: float) -> void:
 		Game.save_game()
 
 
-## Keys turn the ship: A/D yaw, W/S pitch, Q/E roll. The ship spins up and down with momentum (see
+## Keys turn the ship: Q/E yaw, W/S pitch, A/D roll. The ship spins up and down with momentum (see
 ## ship._turn); taking the controls hands them back from the autopilot.
 func _steer() -> void:
 	var yaw := Input.get_axis("yaw_right", "yaw_left")
@@ -522,11 +531,11 @@ func _update_camera(delta: float) -> void:
 	camera.h_offset = randf_range(-1.0, 1.0) * _shake
 	camera.v_offset = randf_range(-1.0, 1.0) * _shake
 	_shake = move_toward(_shake, 0.0, 2.5 * delta)
-	var speed_fov: float = 6.0 if player.boosting else (10.0 if player.cruise_v > 0.0 else 0.0)
+	var speed_fov: float = 6.0 if player.boosting else (20.0 if player.cruise_v > 0.0 else 0.0)
 	var warp_fov := 0.0
 	match travel.get("phase", ""):
 		"charge": warp_fov = -4.0 * clampf(travel.t / travel.charge, 0.0, 1.0)
-		"travel": warp_fov = 26.0
+		"travel": warp_fov = 40.0
 	_fov_kick = move_toward(_fov_kick, 0.0, 40.0 * delta)
 	camera.fov = lerpf(camera.fov, FOV + speed_fov + warp_fov + _fov_kick, 1.0 - exp(-4.0 * delta))
 
@@ -718,16 +727,23 @@ func _update_screen_fx(delta: float) -> void:
 	var phase: String = travel.get("phase", "")
 	var want := 0.0
 	var glow := Color(0, 0, 0, 0)
+	var cruising: bool = player.cruise_v > 0.0 and player.vel.length() > player.top_speed() * 3.0
 	match phase:
 		"charge":
 			var k: float = clampf(travel.t / travel.charge, 0.0, 1.0)
-			glow = Color(travel.color, k * 0.5)
+			glow = Color(travel.color, k * 0.6)
+			want = 0.3 * k * k  # the speed lines start streaming as the drive winds up
 		"travel":
 			want = 1.0
-			glow = Color(travel.color, 0.35)
+			glow = Color(travel.color, 0.45)
+			shake(0.14)  # the whole ship shudders in the tunnel
+	if cruising and phase == "":
+		want = 0.5
+		glow = Color(0.55, 0.8, 1.0, 0.16)
+		shake(0.05)
 	var tm := tunnel.material as ShaderMaterial
 	var cur: float = tm.get_shader_parameter("intensity")
-	tm.set_shader_parameter("intensity", move_toward(cur, want * 0.3, delta * (3.0 if want > cur else 6.0)))
+	tm.set_shader_parameter("intensity", move_toward(cur, want * 0.85, delta * (3.0 if want > cur else 6.0)))
 	var vs := get_viewport().get_visible_rect().size
 	tm.set_shader_parameter("res", vs)
 	# the speed lines stream out of the point the ship is flying toward, wherever the camera is looking (or,
@@ -760,7 +776,11 @@ func _update_screen_fx(delta: float) -> void:
 	vm.set_shader_parameter("res", vs)
 	vm.set_shader_parameter("damage", _hurt)
 	vm.set_shader_parameter("glow", glow)
-	dust.stretch = 1.0 if phase == "travel" else (0.5 if player.cruise_v > 0.0 else 0.0)
+	# the lens fringes harder the faster you go
+	var fv = vm.get_shader_parameter("fringe")
+	var fr: float = fv if fv != null else 0.0016
+	vm.set_shader_parameter("fringe", move_toward(fr, 0.0016 + 0.012 * want, delta * 0.02))
+	dust.stretch = 1.0 if phase == "travel" else (0.9 if player.cruise_v > 0.0 else 0.0)
 	dust.dir = player.forward()
 	dust.offset = warp_scroll
 	if backdrop.get_child_count() > 0:
@@ -838,6 +858,24 @@ func in_port(bay: Dictionary, p: Vector3) -> bool:
 	return along > 30.0 and along < 260.0 and (rel - into * along).length() < bay.bore
 
 
+## Is the ship inside a station's docking bay? You can't warp or cruise from in there: fly out first.
+func in_bay() -> bool:
+	for lm in landmarks:
+		if lm.kind == "station" and in_box(player.position, lm.bay.inner_c, lm.bay.inner_h):
+			return true
+	return false
+
+
+## Says why a warp or cruise didn't start, if it was the docking bay (not more than every couple of seconds).
+func _bay_blocks() -> bool:
+	if not in_bay():
+		return false
+	if Time.get_ticks_msec() - _bay_warned > 2000:
+		_bay_warned = Time.get_ticks_msec()
+		Game.say("You can't warp inside a docking bay - fly out of it first.", UI.MUTED)
+	return true
+
+
 ## The nearest port (a landmark with a "bay": station or gate) within `range_m`, or {}.
 func near_port(range_m: float) -> Dictionary:
 	var best := {}
@@ -861,10 +899,14 @@ func _check_docking() -> void:
 			_dock_armed = false
 			cancel_autopilot()
 			if lm.kind == "station":
+				# the clamps take the ship as the view fades to black; then the station opens
 				_docked_bay = lm.bay
+				mode = "docking"
+				player.throttle = 0.0
+				dock_screen.dock(lm.name, lm.action)
 			else:
 				_gate_bay = lm.bay
-			lm.action.call()
+				lm.action.call()
 			return
 	if not inside:
 		_dock_armed = true
@@ -978,14 +1020,17 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 		dir = Vector3(cos(a), -0.12, sin(a)).normalized()
 	player.position = first.pos - dir * first.arrive
 	aim = Basis.looking_at((first.pos - player.position).normalized(), Vector3.UP)
+	var warped_in: bool = spawn is Vector3 and spawn.length() > 0.01
 	if first.get("kind", "") == "station":
-		# traffic control drops you into the station's approach lane, lined up on the docking bay
-		player.position = first.bay.mouth + first.bay.out * BAY_LANE + Vector3(randf_range(-60, 60), randf_range(-20, 20), 0)
-		aim = Basis.looking_at((first.bay.mouth - player.position).normalized(), Vector3.UP)
+		# traffic control drops you into the station's approach lane, in front of the docking bay. Out of a
+		# warp you keep the heading you warped along (and glide on), rather than snapping round to the station.
+		player.position = first.bay.mouth + first.bay.out * BAY_LANE * 1.3 + Vector3(randf_range(-80, 80), randf_range(-20, 20), 0)
+		var face: Vector3 = dir if warped_in else (first.bay.mouth - player.position).normalized()
+		aim = Basis.looking_at(face, Vector3.UP if absf(face.y) < 0.98 else Vector3.RIGHT)
 	elif first.get("kind", "") == "gate":
 		# arriving by gate you come in from the system you left, off to one side of this end of the gate
 		player.position += dir.cross(Vector3.UP).normalized() * 280.0
-		aim = Basis.looking_at((first.pos - player.position).normalized(), Vector3.UP)
+		aim = Basis.looking_at(dir if warped_in else (first.pos - player.position).normalized(), Vector3.UP)
 	_dock_armed = true
 	player.basis = aim
 	player.stop()
@@ -1134,7 +1179,8 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			world.add_child(st)
 			# the docking bay opens toward -Z: you fly in through the mouth and dock by reaching the pad
 			var bay := {"mouth": at + BAY_MOUTH, "out": Vector3.FORWARD, "pad": at + BAY_PAD, "zone_c": at + BAY_ZONE_C,
-				"zone_h": BAY_ZONE_H, "loc": loc, "right": Vector3.RIGHT, "hw": 120.0, "hh": 67.5, "clear": 850.0, "bore": 90.0}
+				"zone_h": BAY_ZONE_H, "loc": loc, "right": Vector3.RIGHT, "hw": 120.0, "hh": 67.5, "clear": 850.0, "bore": 90.0,
+				"inner_c": at + Vector3(0, 0, -420), "inner_h": Vector3(125, 72, 165)}  # the whole bay (no warping in here)
 			var lm := _landmark(loc.name, "station", "station", at, open_station.bind(loc), "")
 			lm["bay"] = bay
 			for z in [-320.0, -420.0, -515.0]:  # lamps along the bay roof (shadowed, so they don't shine through its walls)
@@ -1688,9 +1734,9 @@ func order_ok(what: String) -> bool:
 	var d: float = player.position.distance_to(target_pos(selected))
 	match what:
 		"warp":
-			return d > LOCAL_WARP_MIN
+			return d > LOCAL_WARP_MIN and not in_bay()
 		"cruise":
-			return d > CRUISE_MIN + target_size(selected)
+			return d > CRUISE_MIN + target_size(selected) and not in_bay()
 		"use":
 			return selected is Dictionary and selected.has("action")
 	return true
@@ -1709,6 +1755,8 @@ func order(what: String) -> void:
 		"orbit":
 			_start_autopilot("orbit", t, size + player.radius + (250.0 if t is Dictionary else 60.0))
 		"cruise":
+			if _bay_blocks():
+				return
 			var stop: float = size + player.radius + (250.0 if t is Dictionary else 80.0)
 			if d <= stop + CRUISE_MIN:
 				_start_autopilot("approach", t, stop)
@@ -1727,6 +1775,8 @@ func order(what: String) -> void:
 			else:
 				_start_autopilot("use", t, t.radius * 0.8)
 		"warp":
+			if _bay_blocks():
+				return
 			if d <= LOCAL_WARP_MIN:
 				Game.say("Too close to warp - approaching instead.", UI.MUTED)
 				_start_autopilot("approach", t, size + player.radius + 60.0)
@@ -1841,9 +1891,18 @@ func _update_autopilot(delta: float) -> void:
 				autopilot = {}
 				return
 			if autopilot.t < CRUISE_SPOOL:
-				# spooling up: swing round onto the line and creep forward
+				# spooling up: swing round onto the line and creep forward, the ship trembling
 				player.cruise_v = 0.0
 				player.throttle = 0.2
+				shake(autopilot.t / CRUISE_SPOOL * 0.2)
+			elif not autopilot.get("engaged", false):
+				# the cruise drive kicks in
+				autopilot["engaged"] = true
+				_flash(0.15)
+				_fov_kick = 16.0
+				shake(0.35)
+				Sfx.play("warp", -5.0, 1.5)
+				player.cruise_v = top * 3.0
 			else:
 				# hold cruise speed, easing back down to normal flight speed over the last stretch
 				player.cruise_v = clampf(left * 0.9, player.top_speed(), top * CRUISE_MULT + 60.0)
@@ -2044,7 +2103,7 @@ func cargo_full() -> void:
 
 ## Damage is ignored while docked, or inside the warp tunnel (but not while turning or charging).
 func invulnerable() -> bool:
-	return mode == "docked" or (mode == "warp" and not travel.get("phase", "") in ["align", "charge"])
+	return mode in ["docked", "docking", "launching"] or (mode == "warp" and not travel.get("phase", "") in ["align", "charge"])
 
 
 ## Start a timed warp or jump: the ship turns to face the destination, the drive charges (you can still
@@ -2090,7 +2149,7 @@ func _update_travel(delta: float) -> void:
 				Sfx.play("charge", -6.0, 2.2 / travel.charge)
 		"charge":
 			var k: float = clampf(travel.t / travel.charge, 0.0, 1.0)
-			shake(k * 0.12)
+			shake(k * 0.35)
 			if travel.has("gate"):
 				# the railgun: accelerate hard down the barrel, held to its centre line, to leave the muzzle
 				# just as the charge completes; the coils flare as the ship passes through them
@@ -2114,8 +2173,8 @@ func _update_travel(delta: float) -> void:
 				else:
 					_rush = Vector3.ZERO
 					_rush_v = 400.0 if travel.has("gate") else 150.0
-				_flash(0.35)
-				Sfx.play("warp", -6.0)
+				_flash(0.55)
+				Sfx.play("warp", -1.0)
 				var f := _fx(player.position)
 				# punch forward: a jet of light blasts out behind the ship
 				f.jet(70, Color(travel.color).lightened(0.4), -fwd, 160.0, 14.0, 0.8)
@@ -2147,8 +2206,8 @@ func _update_travel(delta: float) -> void:
 					_rush = -travel.heading * 30000.0
 					world.position = -_rush
 				world.visible = true
-				_flash(0.25)
-				Sfx.play("arrive", -6.0)
+				_flash(0.4)
+				Sfx.play("arrive", -2.0)
 				fwd = player.forward()
 				# drop out of warp still moving: light sprays out ahead and the ship glides forward
 				var f := _fx(player.position)
@@ -2189,7 +2248,7 @@ func _flash(a: float) -> void:
 
 
 func start_warp(loc_i: int) -> void:
-	if mode != "fly":
+	if mode != "fly" or _bay_blocks():
 		return
 	force_warp_menu = false
 	warp_menu.hide()
@@ -2289,16 +2348,26 @@ func close_panel() -> void:
 	var was_docked := mode == "docked"
 	mode = "fly"
 	if was_docked and not _docked_bay.is_empty():
-		# undock: released from the pad, drifting gently out toward the mouth
+		# undock: the ship sits on the pad facing out while its systems start up on the black screen, then
+		# the view fades in and the clamps let it drift out toward the mouth
 		var bay := _docked_bay
 		_docked_bay = {}
 		player.position = bay.pad + Vector3(0, 4, 0)
 		aim = Basis.looking_at(bay.out, Vector3.UP)
 		player.basis = aim
 		player.stop()
-		player.vel = bay.out * 5.0
 		_dock_armed = false
 		snap_camera()
+		mode = "launching"
+		dock_screen.launch(_launched.bind(bay.out))
+	elif was_docked:
+		dock_screen.reset()
+
+
+func _launched(out: Vector3) -> void:
+	if mode == "launching":
+		mode = "fly"
+		player.vel = out * 5.0
 
 
 func close_inventory() -> void:
@@ -2356,6 +2425,7 @@ func player_died() -> void:
 	inventory.hide()
 	fitting.hide()
 	confirm.hide()
+	dock_screen.reset()
 	Game.cargo.clear()
 	Game.event("death")
 	Game.changed.emit()

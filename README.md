@@ -19,9 +19,9 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 | | |
 |---|---|
 | W / S | pitch the nose up / down |
-| A / D | turn |
+| Q / E | turn |
 | R / F | throttle up / down (it stays where you leave it) |
-| Q / E | roll |
+| A / D | roll |
 | X | brake, SHIFT boost |
 | Mouse | swing the camera round the ship (it doesn't steer) |
 | Click | fire: the gun turrets swivel to whatever the crosshair is on and fire once they're on it |
