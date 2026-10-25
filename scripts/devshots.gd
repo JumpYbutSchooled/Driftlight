@@ -366,7 +366,8 @@ func _run() -> void:
 	await _secs(0.5)
 	var gate := -1
 	for k in Game.systems[0].locs.size():
-		if Game.systems[0].locs[k].kind == "gate":
+		var l: Dictionary = Game.systems[0].locs[k]
+		if l.kind == "gate" and Game.systems[l.gate_to].cat != Game.CAT_PURPLE:  # (Wild gates ask first)
 			gate = k
 			break
 	main.start_warp(gate)
@@ -383,6 +384,41 @@ func _run() -> void:
 		await get_tree().process_frame
 	await _secs(1.0)
 	await _shot("07_stargate")
+	# the gate is a railgun: the autopilot lines up on its mouth and flies in, the coils fire the ship down
+	# the barrel (which points at the next system) and out into the jump
+	var gate_lm = null
+	for lm in main.landmarks:
+		if lm.kind == "gate":
+			gate_lm = lm
+	var dest_id: int = Game.systems[0].locs[gate].gate_to
+	var gate_dir: Vector3 = -gate_lm.bay.out
+	main.select(gate_lm)
+	main.order("use")
+	Engine.time_scale = 8.0
+	t0 = Time.get_ticks_msec()
+	while main.mode == "fly" and Time.get_ticks_msec() - t0 < 60000:
+		await get_tree().process_frame
+	Engine.time_scale = 1.0
+	print("gate autopilot: mode %s after %.1f s real (x8), launched by the gate %s, heading %.1f deg off the barrel" % [
+		main.mode, (Time.get_ticks_msec() - t0) / 1000.0, main.travel.has("gate"),
+		rad_to_deg(main.travel.get("heading", Vector3.ZERO).angle_to(gate_dir))])
+	if main.mode == "dialog":
+		print("gate leads to Wild space: the warning is up")
+	while main.travel.get("phase", "") != "charge" and main.mode == "warp":
+		await get_tree().process_frame
+	await _secs(main.travel.get("charge", 1.0) * 0.6)
+	await _shot("07b_gate_launch")
+	while main.travel.get("phase", "") != "travel" and main.mode == "warp":
+		await get_tree().process_frame
+	print("left the muzzle at %.0f m/s, %.0f m off the barrel's line" % [p.vel.length(), main._off_axis(gate_lm.bay).length()])
+	await _secs(1.4)
+	await _shot("07c_jump_rush")
+	print("jump rush: world %.0f km behind, visible %s" % [main._rush.length() / 1000.0, main.world.visible])
+	while main.mode != "fly":
+		await get_tree().process_frame
+	print("arrived in system %d (wanted %d)" % [Game.current_system, dest_id])
+	await _secs(0.3)
+	await _shot("07d_gate_arrival")
 
 	# photo mode: the UI hides, time stops, and a free camera looks back at the ship
 	main.toggle_photo()

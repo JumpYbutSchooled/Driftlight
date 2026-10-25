@@ -72,7 +72,7 @@ const SCAN_COOLDOWN := 8.0
 # how far from each kind of thing you drop out of warp, and how close you must be to use it
 const ARRIVE := {"station": 5000.0, "gate": 1100.0, "ore": 3600.0, "obelisk": 700.0, "spice": 450.0, "wormhole": 1100.0,
 	"wreck": 450.0}
-const USE_RANGE := {"gate": 650.0, "obelisk": 280.0, "spice": 170.0, "wormhole": 500.0, "wreck": 260.0}
+const USE_RANGE := {"obelisk": 280.0, "spice": 170.0, "wormhole": 500.0, "wreck": 260.0}
 # the station's docking bay, relative to the station (it opens toward -Z; see props.py station()): the middle
 # of its mouth, the landing pad at the back, and the box you fly into to dock
 const BAY_MOUTH := Vector3(0, 0, -540)
@@ -148,6 +148,9 @@ var _wormhole: Node3D
 var _wormhole_armed := true
 var _dock_armed := true  # false after undocking until you've left the docking zone
 var _docked_bay := {}  # the bay you're docked in (you undock onto its pad)
+var _gate_bay := {}  # the stargate you just flew into (it fires you down its barrel)
+var _rush := Vector3.ZERO  # in a jump, how far the world has streamed away behind you (or, arriving, sits ahead)
+var _rush_v := 0.0
 var _pirate_timer := -1.0
 var _full_warned := 0
 var _shake := 0.0
@@ -649,12 +652,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("interact") and mode == "fly":
 		var near = _nearest_interactable()
-		var st := station_lm()
+		var port := near_port(3500.0)
 		if near:
 			near.action.call()
-		elif not st.is_empty() and player.position.distance_to(st.pos) < 3500.0:
-			select(st)
-			order("use")  # near a station: the autopilot flies you into its docking bay
+		elif not port.is_empty():
+			select(port)
+			order("use")  # near a station or gate: the autopilot flies you into its bay or mouth
 	elif event.is_action_pressed("galaxy_map"):
 		if galaxy_map.visible:
 			close_maps()
@@ -704,6 +707,19 @@ func _update_screen_fx(delta: float) -> void:
 	tm.set_shader_parameter("intensity", move_toward(cur, want * 0.3, delta * (3.0 if want > cur else 6.0)))
 	var vs := get_viewport().get_visible_rect().size
 	tm.set_shader_parameter("res", vs)
+	# the speed lines stream out of the point the ship is flying toward, wherever the camera is looking (or,
+	# with it behind the camera, into the point it's flying away from)
+	var hd: Vector3 = travel.get("heading", player.forward())
+	var far: Vector3 = camera.global_position + hd * 100000.0
+	var inward := 0.0
+	if camera.is_position_behind(far):
+		far = camera.global_position - hd * 100000.0
+		inward = 1.0
+	var vp := Vector2(0.5, 0.5)
+	if not camera.is_position_behind(far):
+		vp = camera.unproject_position(far) / vs
+	tm.set_shader_parameter("center", vp)
+	tm.set_shader_parameter("inward", inward)
 	# the 3D warp tunnel wrapped round the ship
 	var wp := 0.0
 	match phase:
@@ -726,7 +742,7 @@ func _update_screen_fx(delta: float) -> void:
 	dust.offset = warp_scroll
 	if backdrop.get_child_count() > 0:
 		# the planet is far away and barely moves, until you warp: then it's left behind fast
-		backdrop.position = -(warp_scroll - _scroll_base) * 3.0
+		backdrop.position = -(warp_scroll - _scroll_base) * 3.0 - _rush
 
 
 func hurt(amount: float) -> void:
@@ -788,46 +804,77 @@ static func in_box(p: Vector3, c: Vector3, h: Vector3) -> bool:
 	return v.x < h.x and v.y < h.y and v.z < h.z
 
 
-## Docking: fly into the station's docking bay, onto the pad at the back. Near the station the prompt
-## says so (and that G lets the autopilot fly you in).
+## Is `p` inside a port's trigger zone: a station's docking zone over its pad, or a gate's bore just past
+## its mouth?
+func in_port(bay: Dictionary, p: Vector3) -> bool:
+	if bay.has("zone_c"):
+		return in_box(p, bay.zone_c, bay.zone_h)
+	var into: Vector3 = -bay.out
+	var rel: Vector3 = p - bay.mouth
+	var along := rel.dot(into)
+	return along > 30.0 and along < 260.0 and (rel - into * along).length() < bay.bore
+
+
+## The nearest port (a landmark with a "bay": station or gate) within `range_m`, or {}.
+func near_port(range_m: float) -> Dictionary:
+	var best := {}
+	var bd := range_m
+	for lm in landmarks:
+		if lm.has("bay") and player.position.distance_to(lm.bay.mouth) < bd:
+			bd = player.position.distance_to(lm.bay.mouth)
+			best = lm
+	return best
+
+
+## Ports: fly into a station's docking bay onto the pad to dock, or into a stargate's mouth to be fired
+## down its barrel. Near one the prompt says so (and that G lets the autopilot fly you in).
 func _check_docking() -> void:
-	var lm := station_lm()
-	if lm.is_empty():
-		return
-	var bay: Dictionary = lm.bay
-	var inside := in_box(player.position, bay.zone_c, bay.zone_h)
+	var inside := false
+	for lm in landmarks:
+		if not lm.has("bay") or not in_port(lm.bay, player.position):
+			continue
+		inside = true
+		if _dock_armed:
+			_dock_armed = false
+			cancel_autopilot()
+			if lm.kind == "station":
+				_docked_bay = lm.bay
+			else:
+				_gate_bay = lm.bay
+			lm.action.call()
+			return
 	if not inside:
 		_dock_armed = true
-	elif _dock_armed:
-		cancel_autopilot()
-		_docked_bay = bay
-		lm.action.call()
-		return
-	if hud.prompt == "" and player.position.distance_to(lm.pos) < 3500.0 and not inside:
-		hud.prompt = "Fly into the docking bay to dock   -   G: docking autopilot" if autopilot.get("mode", "") != "dock" \
-			else "Docking autopilot engaged"
+	var lm := near_port(3500.0)
+	if hud.prompt == "" and not lm.is_empty() and not inside:
+		var station: bool = lm.kind == "station"
+		if autopilot.get("mode", "") == "dock":
+			hud.prompt = "Docking autopilot engaged" if station else "Autopilot: lining up on the gate"
+		else:
+			hud.prompt = "Fly into the docking bay to dock   -   G: docking autopilot" if station \
+				else "Fly into the gate to jump to %s   -   G: autopilot" % lm.bay.dest
 
 
-## Where the docking autopilot heads next: lined up out in front of the bay's mouth first (round the
-## station if it's in the way), then straight in to the pad.
+## Where the docking autopilot heads next: lined up out in front of the port's mouth first (round the
+## station or gate if it's in the way), then straight in to the pad.
 func _dock_goal(lm: Dictionary) -> Vector3:
 	var bay: Dictionary = lm.bay
 	var p: Vector3 = player.position
 	var rel: Vector3 = p - bay.mouth
 	var along: float = rel.dot(bay.out)  # metres out in front of the mouth (negative: inside the bay)
 	var lateral: float = (rel - bay.out * along).length()
-	if (along < 30.0 and lateral < 90.0) or (along >= 0.0 and along < BAY_LANE * 1.4 and lateral < 40.0 + along * 0.12):
+	if (along < 30.0 and lateral < bay.bore) or (along >= 0.0 and along < BAY_LANE * 1.4 and lateral < 40.0 + along * 0.12):
 		return bay.pad
 	var goal: Vector3 = bay.mouth + bay.out * 450.0
 	var c: Vector3 = lm.pos
 	var seg := goal - p
 	var t := clampf((c - p).dot(seg) / maxf(seg.length_squared(), 1.0), 0.0, 1.0)
-	if (p + seg * t).distance_to(c) < 850.0:
+	if (p + seg * t).distance_to(c) < bay.clear:
 		var side: Vector3 = p - c
 		side -= bay.out * side.dot(bay.out)
 		if side.length() < 1.0:
 			side = Vector3.RIGHT
-		goal = c + side.normalized() * 1150.0 + bay.out * 300.0
+		goal = c + side.normalized() * (bay.clear + 300.0) + bay.out * 300.0
 	return goal
 
 
@@ -838,6 +885,7 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 		c.queue_free()
 	for c in backdrop.get_children():
 		c.queue_free()
+	world.position = Vector3.ZERO
 	_scroll_base = warp_scroll
 	backdrop.position = Vector3.ZERO
 	interactables.clear()
@@ -906,10 +954,14 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 		dir = Vector3(cos(a), -0.12, sin(a)).normalized()
 	player.position = first.pos - dir * first.arrive
 	aim = Basis.looking_at((first.pos - player.position).normalized(), Vector3.UP)
-	if first.has("bay"):
+	if first.get("kind", "") == "station":
 		# traffic control drops you into the station's approach lane, lined up on the docking bay
 		player.position = first.bay.mouth + first.bay.out * BAY_LANE + Vector3(randf_range(-60, 60), randf_range(-20, 20), 0)
 		aim = Basis.looking_at((first.bay.mouth - player.position).normalized(), Vector3.UP)
+	elif first.get("kind", "") == "gate":
+		# arriving by gate you come in from the system you left, off to one side of this end of the gate
+		player.position += dir.cross(Vector3.UP).normalized() * 280.0
+		aim = Basis.looking_at((first.pos - player.position).normalized(), Vector3.UP)
 	_dock_armed = true
 	player.basis = aim
 	player.stop()
@@ -1058,7 +1110,7 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			world.add_child(st)
 			# the docking bay opens toward -Z: you fly in through the mouth and dock by reaching the pad
 			var bay := {"mouth": at + BAY_MOUTH, "out": Vector3.FORWARD, "pad": at + BAY_PAD, "zone_c": at + BAY_ZONE_C,
-				"zone_h": BAY_ZONE_H, "loc": loc}
+				"zone_h": BAY_ZONE_H, "loc": loc, "right": Vector3.RIGHT, "hw": 120.0, "hh": 67.5, "clear": 850.0, "bore": 90.0}
 			var lm := _landmark(loc.name, "station", "station", at, open_station.bind(loc), "")
 			lm["bay"] = bay
 			for z in [-320.0, -420.0, -515.0]:  # lamps along the bay roof (shadowed, so they don't shine through its walls)
@@ -1115,21 +1167,34 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			_landmark("Spice Stand", "spice", "spice", at, open_panel.bind("spice", loc), "[G]  Browse the Spice Stand")
 			_obstacle("sphere", {"c": at + Vector3(0, 12, 0), "r": 24.0})
 		"gate":
+			# a railgun: the barrel points at the system it leads to, and you fly in at the mouth to be fired
+			# down it (see _update_travel)
 			var dest_sys: Dictionary = Game.systems[loc.gate_to]
+			var hv: Vector2 = dest_sys.pos - sys.pos
+			var dir := Vector3(hv.x, 0.0, hv.y).normalized() if hv.length() > 0.001 else Vector3.FORWARD
+			var side := dir.cross(Vector3.UP).normalized()
 			var gate := GateField.new()
 			gate.color = Game.CAT_COLORS[dest_sys.cat]
 			gate.dest = dest_sys.name
 			gate.position = at
+			gate.basis = Basis.looking_at(dir, Vector3.UP)
 			world.add_child(gate)
-			_landmark("Stargate to " + dest_sys.name, "gate", "gate", at, try_gate.bind(loc.gate_to),
-				"[G]  Jump to %s  (%s System)" % [dest_sys.name, Game.CAT_NAMES[dest_sys.cat]])
-			# the ring stands across the Z axis: fly through the middle, bump off the frame
-			_obstacle("torus", {"c": at, "n": Vector3.BACK, "R": 123.0, "r": 13.0})
+			var mouth := at - dir * GateField.MOUTH
+			var lm := _landmark("Stargate to " + dest_sys.name, "gate", "gate", at, try_gate.bind(loc.gate_to), "")
+			lm["bay"] = {"mouth": mouth, "out": -dir, "pad": mouth + dir * 160.0, "bore": GateField.BORE - 4.0, "gate": gate,
+				"right": side, "hw": GateField.BORE, "hh": GateField.BORE, "clear": 380.0, "dest": dest_sys.name}
+			# the coils (rings round the barrel), the mouth and its flare, the muzzle, the four rails and the
+			# power plant alongside: fly down the bore, bump off the frame
+			for y in GateField.COILS:
+				_obstacle("torus", {"c": at + dir * y * GateField.SCALE, "n": dir, "R": 56.0, "r": 10.0})
+			_obstacle("torus", {"c": at - dir * 280.0, "n": dir, "R": 77.5, "r": 12.0})
+			_obstacle("torus", {"c": at - dir * 302.0, "n": dir, "R": 92.5, "r": 9.0})
+			_obstacle("torus", {"c": at + dir * 280.0, "n": dir, "R": 65.0, "r": 13.0})
 			for i in 4:
-				var o := Vector3(cos(i * PI / 2.0), sin(i * PI / 2.0), 0.0)
-				_obstacle("sphere", {"c": at + o * 151.0, "r": 26.0})
-			for sx in [-1, 1]:
-				_obstacle("capsule", {"a": at + Vector3(sx * 146, 0, -92), "b": at + Vector3(sx * 146, 0, 92), "r": 10.0})
+				var a := i * PI / 2.0 + PI / 4.0
+				var off := (side * cos(a) + Vector3.UP * sin(a)) * 68.0
+				_obstacle("capsule", {"a": at + off - dir * 270.0, "b": at + off + dir * 270.0, "r": 7.0})
+			_obstacle("capsule", {"a": at + side * 125.0 - dir * 125.0, "b": at + side * 125.0 + dir * 25.0, "r": 32.0})
 		"wormhole":
 			_wormhole = Wormhole.new()
 			_wormhole.position = at
@@ -1872,6 +1937,8 @@ func _update_travel(delta: float) -> void:
 			# the ship swings round to face the destination (see ship._turn) before the drive can charge
 			aim = travel.want
 			player.vel = player.vel.move_toward(Vector3.ZERO, player.top_speed() * 0.6 * delta)
+			if travel.has("gate"):
+				player.vel -= _off_axis(travel.gate) * 1.5 * delta  # drift onto the gate's centre line
 			if fwd.angle_to(travel.heading) < 0.02:
 				travel.phase = "charge"
 				travel.t = 0.0
@@ -1879,16 +1946,29 @@ func _update_travel(delta: float) -> void:
 		"charge":
 			var k: float = clampf(travel.t / travel.charge, 0.0, 1.0)
 			shake(k * 0.12)
-			# the ship starts rolling forward and the world begins to slide past
-			player.vel = fwd * player.top_speed() * 0.5 * k
-			_scroll_speed = 220.0 * k * k * k
+			if travel.has("gate"):
+				# the railgun: accelerate hard down the barrel, held to its centre line, to leave the muzzle
+				# just as the charge completes; the coils flare as the ship passes through them
+				var g: Dictionary = travel.gate
+				var into: Vector3 = -g.out
+				if not travel.has("rail_a"):
+					var left: float = GateField.MOUTH + GateField.MUZZLE + 20.0 - (player.position - g.mouth).dot(into)
+					travel.rail_a = 2.0 * maxf(left, 60.0) / (travel.charge * travel.charge)
+					g.gate.launch(travel.charge)
+				player.vel = into * travel.rail_a * travel.t - _off_axis(g) * 4.0
+				_scroll_speed = 220.0 * k * k * k
+			else:
+				# the ship starts rolling forward and the world begins to slide past
+				player.vel = fwd * player.top_speed() * 0.5 * k
+				_scroll_speed = 220.0 * k * k * k
 			if travel.t >= travel.charge:
 				travel.phase = "travel"
 				travel.t = 0.0
 				if travel.kind == "local":
 					travel.from = player.position  # it crept forward while charging
 				else:
-					world.visible = false
+					_rush = Vector3.ZERO
+					_rush_v = 400.0 if travel.has("gate") else 150.0
 				_flash(0.35)
 				Sfx.play("warp", -6.0)
 				var f := _fx(player.position)
@@ -1898,19 +1978,29 @@ func _update_travel(delta: float) -> void:
 				_fov_kick = 18.0
 		"travel":
 			if travel.kind == "local":
-				# across this location with the world still there, streaking past
+				# across this location with the world still there, streaking past (and the planet swinging by)
 				var s := clampf(travel.t / travel.travel, 0.0, 1.0)
 				var before: Vector3 = player.position
 				player.position = (travel.from as Vector3).lerp(travel.to, s * s * (3.0 - 2.0 * s))
 				player.vel = (player.position - before) / maxf(delta, 0.001) * 0.02
+				warp_scroll += player.position - before
 			else:
+				# everything here - stations, rocks, the planet - streams away behind you faster and faster
+				# until it's gone
 				player.vel = Vector3.ZERO
 				_scroll_speed = move_toward(_scroll_speed, WARP_SCROLL_MAX, 3000.0 * delta)
+				_rush_v = minf(_rush_v * exp(3.0 * delta), 600000.0)
+				_rush += travel.heading * _rush_v * delta
+				world.position = -_rush
+				world.visible = _rush.length() < 60000.0
 			if travel.t >= travel.travel:
 				travel.phase = "exit"
 				travel.t = 0.0
 				if travel.kind != "local":
 					travel.arrive.call()
+					# the new place rushes in from far ahead and settles round you
+					_rush = -travel.heading * 30000.0
+					world.position = -_rush
 				world.visible = true
 				_flash(0.25)
 				Sfx.play("arrive", -6.0)
@@ -1924,10 +2014,21 @@ func _update_travel(delta: float) -> void:
 				shake(0.3)
 		"exit":
 			_scroll_speed = move_toward(_scroll_speed, 0.0, 4000.0 * delta)
-			if travel.t >= 0.6:
+			_rush *= exp(-7.0 * delta)
+			world.position = -_rush
+			if travel.t >= (0.6 if travel.kind == "local" else 1.2):
 				travel = {}
 				_scroll_speed = 0.0
+				_rush = Vector3.ZERO
+				world.position = Vector3.ZERO
 				mode = "fly"
+
+
+## How far the ship is off a gate's centre line (sideways, as a vector).
+func _off_axis(g: Dictionary) -> Vector3:
+	var into: Vector3 = -g.out
+	var rel: Vector3 = player.position - g.mouth
+	return rel - into * rel.dot(into)
 
 
 ## The direction you arrive from (enter_location drops you out of warp short of the main thing there,
@@ -1968,12 +2069,18 @@ func try_gate(dest: int) -> void:
 		_gate_jump(dest)
 
 
+## Jump to another system. Flown into a stargate's mouth, the gate's coils fire you down its barrel (which
+## points at that system) and out of the muzzle into the jump.
 func _gate_jump(dest: int) -> void:
 	var back := Game.gate_index(dest, Game.current_system)
 	Game.event("jump")
 	var heading: Vector2 = Game.systems[dest].pos - current_sys().pos
+	var extra := {}
+	if not _gate_bay.is_empty() and player.position.distance_to(_gate_bay.mouth) < 800.0:
+		extra = {"gate": _gate_bay}
+	_gate_bay = {}
 	_travel_to("jump", Game.systems[dest].name, JUMP_CHARGE, JUMP_BASE + heading.length() * JUMP_PER_PX,
-		enter_location.bind(dest, back, _arrival_spot(heading)), Game.CAT_COLORS[Game.systems[dest].cat], heading)
+		enter_location.bind(dest, back, _arrival_spot(heading)), Game.CAT_COLORS[Game.systems[dest].cat], heading, extra)
 
 
 func enter_wormhole() -> void:
@@ -2068,6 +2175,8 @@ func player_died() -> void:
 	mode = "dead"
 	travel = {}
 	_scroll_speed = 0.0
+	_rush = Vector3.ZERO
+	world.position = Vector3.ZERO
 	world.visible = true
 	explosion(player.position, 2.2, Color("ff7a45"))
 	shake(0.6)

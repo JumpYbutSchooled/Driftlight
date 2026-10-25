@@ -19,7 +19,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	visible = main.mode in ["fly", "warp"] and main.player.alive and main.target_valid(main.selected) and not main.debug
+	visible = main.mode == "fly" and main.player.alive and main.target_valid(main.selected) and not main.debug
 	if not visible:
 		return
 	var vs := get_viewport_rect().size

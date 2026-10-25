@@ -446,81 +446,93 @@ def station():
     export(r, os.path.join(PROPS, "station.glb"))
 
 def gate():
-    """A stargate: a plated ring with four pylons and two forward prongs, a turning collar and lights that chase
-    round the aperture."""
+    """A stargate built as a railgun: a long accelerator of heavy octagonal coils strung on four rails, with a
+    flared entrance at the back, a muzzle at the front and a power plant alongside. Ships fly in at the
+    entrance and the coils fire them out of the muzzle toward the next system (the game points the barrel
+    at it). Built along +Y (the barrel's firing direction); the game shows it five times this size, about
+    600 m long."""
     rng = random.Random("gate")
-    metal = mat("gate_metal", "6b6f80", 0.7, 0.4)
+    metal = mat("gate_metal", "6b6f80", 0.7, 0.38)
     metal2 = mat("gate_metal2", "54586a", 0.7, 0.45)
-    seam = mat("gate_seam", "16181f", 0.6, 0.7)
+    seam = mat("gate_seam", "2a2d36", 0.6, 0.6)
     dark = mat("gate_dark", "2a2c36", 0.7, 0.5)
     trim = mat("gate_trim", "a9b0c4", 0.5, 0.4)
-    glow = mat("gate_glow", "7ff0ff", 0.0, 0.2, emit=6.0)
-    hot = mat("gate_hot", "e0ffff", 0.0, 0.2, emit=12.0)
-    lamp = mat("st_light", "ffd27a", 0.0, 0.3, emit=7.0)
-    red = mat("nav_red", "ff3030", 0.0, 0.3, emit=8.0)
+    hazard = mat("gate_hazard", "d9a03c", 0.4, 0.45)
+    glow = mat("gate_glow", "7ff0ff", 0.0, 0.2, emit=2.5)
+    lamp = mat("st_light", "ffd27a", 0.0, 0.3, emit=4.0)
+    red = mat("nav_red", "ff3030", 0.0, 0.3, emit=5.0)
     P = [metal, seam, metal2]
     r = root("gate")
     fr = root("frame")
     fr.parent = r
     g = Greebler(fr, rng, metal2, dark, trim, lamp)
-    # the ring stands upright (in the XZ plane) so ships fly through it along Y
-    R = 24.6
-    n = 20
-    for i in range(n):
-        a = i * 2 * math.pi / n
+
+    def octagon(name, y, r_mid, depth, thick, mats, emit_inner=False):
+        """An octagonal ring round the Y axis: eight plated segments."""
+        side_len = 2 * (r_mid + thick / 2) * math.tan(math.pi / 8) + 0.1
+        for i in range(8):
+            a = i * math.pi / 4 + math.pi / 8
+            out = Vector((math.cos(a), 0, math.sin(a)))
+            rot = (0, -a + math.pi / 2, 0)
+            plated(name, (side_len, depth, thick), tuple(out * r_mid + Vector((0, y, 0))), mats, fr, rot=rot, cell=1.6,
+                   rng=rng, chamfer=0.25)
+            if emit_inner:
+                box("coil_emitter", (side_len * 0.7, depth * 0.55, 0.2), tuple(out * (r_mid - thick / 2 - 0.08) + Vector((0, y, 0))),
+                    glow, 0.0, rot=rot, parent=fr)
+
+    # the coils down the barrel, each with a lit inner face and cooling fins on its back
+    coils = (-48.0, -32.0, -16.0, 0.0, 16.0, 32.0, 48.0)
+    for y in coils:
+        octagon("coil", y, 11.25, 4.0, 3.5, P, emit_inner=True)
+        for i in range(8):
+            a = i * math.pi / 4
+            out = Vector((math.cos(a), 0, math.sin(a)))
+            box("coil_fin", (0.4, 2.6, 2.4), tuple(out * 14.0 + Vector((0, y, 0))), dark, 0.0, rot=(0, -a + math.pi / 2, 0), parent=fr)
+    # four rails tying the coils together, with power conduits along their inner faces
+    for i in range(4):
+        a = i * math.pi / 2 + math.pi / 4
         out = Vector((math.cos(a), 0, math.sin(a)))
-        seg = 2 * (R + 1.6) * math.tan(math.pi / n) + 0.15
-        plated("ring", (seg, 6.0, 3.2), tuple(out * R), P, fr, rot=(0, -a + math.pi / 2, 0), cell=1.5, rng=rng,
-               faces=["+Z", "+Y", "-Y"], chamfer=0.3)
-        box("emitter", (1.6, 4.2, 0.8), tuple(out * (R - 1.9)), glow, 0.0, rot=(0, -a + math.pi / 2, 0), parent=fr)
-        box("emitter_frame", (2.4, 4.8, 0.4), tuple(out * (R - 1.65)), dark, 0.0, rot=(0, -a + math.pi / 2, 0), parent=fr)
-    torus("inner", 22.1, 0.35, (0, 0, 0), hot, rot=(math.pi / 2, 0, 0), parent=fr, seg=96, ring=6)
-    for y in (-3.1, 3.1):
-        torus("lip", R - 0.6, 0.45, (0, y, 0), trim, rot=(math.pi / 2, 0, 0), parent=fr, seg=96, ring=6)
-    # pylons at the four compass points, the side ones carrying long prongs fore and aft
+        rot = (0, -a + math.pi / 2, 0)
+        plated("rail", (2.4, 108.0, 2.4), tuple(out * 13.6), [metal2, seam, metal], fr, rot=rot, cell=2.0, rng=rng, chamfer=0.3)
+        box("conduit", (0.8, 104.0, 0.3), tuple(out * 12.3), glow, 0.0, rot=rot, parent=fr)
+        for k in range(14):
+            y = -52.0 + k * 8.0
+            box("rail_clamp", (3.2, 1.0, 3.2), tuple(out * 13.6 + Vector((0, y, 0))), dark, 0.0, rot=rot, parent=fr)
+    # the entrance: a wide flared mouth ringed in hazard stripes, guide lights round it
+    octagon("mouth", -56.0, 15.5, 3.0, 4.0, [metal, seam, hazard])
+    octagon("mouth_flare", -60.5, 18.5, 2.0, 3.0, P)
+    for i in range(16):
+        a = i * math.pi / 8
+        light("mouth_light", (math.cos(a) * 13.2, -57.7, math.sin(a) * 13.2), 0.35, lamp, r, period=48, on=6, phase=(i * 3) % 48)
+    # the muzzle: a heavy end ring with four brake fins
+    octagon("muzzle", 56.0, 13.0, 5.0, 4.5, [dark, seam, metal2])
     for i in range(4):
         a = i * math.pi / 2
         out = Vector((math.cos(a), 0, math.sin(a)))
-        c = out * (R + 4.5)
-        rot = (0, -a + math.pi / 2, 0)
-        for sy in (-1, 1):  # two cheeks with a gap between them for the collar to turn through
-            plated("pylon", (6.0, 3.0, 5.0), tuple(out * (R + 3.4) + Vector((0, sy * 3.0, 0))), P, fr, rot=rot, cell=1.2,
-                   rng=rng, chamfer=0.3)
-        plated("pylon_cap", (6.6, 9.0, 3.4), tuple(out * (R + 7.4)), P, fr, rot=rot, cell=1.4, rng=rng, chamfer=0.5)
-        c = out * (R + 5.6)
-        F = frame(c + out * 3.5, Vector((-math.sin(a), 0, math.cos(a))) * -1, Vector((0, 1, 0)), out)
-        g.patch(F, 5.0, 8.0, 10, 1.2)
-        light("pylon_light", tuple(out * (R + 9.6)), 0.45, red, r, period=60, on=8, phase=i * 15)
-        if i % 2 == 0:
-            for sy in (-1, 1):
-                prong = out * (R + 4.6) + Vector((0, sy * 11.0, 0))
-                plated("prong", (3.0, 14.0, 3.0), tuple(prong), P, fr, rot=(0, -a + math.pi / 2, 0), cell=1.3, rng=rng,
-                       chamfer=0.3)
-                tip = prong + Vector((0, sy * 7.6, 0))
-                cyl("prong_tip", 1.4, 2.0, tuple(tip), dark, rot=(math.radians(90), 0, 0), parent=fr, segs=8, r2=0.4)
-                ico("prong_glow", 0.8, tuple(tip + Vector((0, sy * 1.2, 0))), glow, 2, parent=fr)
-                for k in range(4):
-                    box("prong_fin", (4.4, 0.25, 4.4), tuple(prong + Vector((0, sy * (k * 3.0 - 4.5), 0))), dark, 0.0,
-                        rot=(0, -a, 0), parent=fr)
+        plated("brake", (1.4, 8.0, 7.0), tuple(out * 19.0 + Vector((0, 55.0, 0))), P, fr, rot=(0, -a + math.pi / 2, 0), cell=1.4,
+               rng=rng, chamfer=0.3)
+        light("muzzle_light", tuple(out * 22.7 + Vector((0, 58.0, 0))), 0.6, red, r, period=60, on=8, phase=i * 15)
+    # the power plant riding alongside, linked to the rails by trusses
+    pp = Vector((25.0, -10.0, 0.0))
+    plated("plant", (10.0, 30.0, 12.0), tuple(pp), P, fr, cell=2.0, rng=rng, chamfer=0.8)
+    g.patch(frame(pp + Vector((0, 0, 6.05)), Vector((1, 0, 0)), Vector((0, 1, 0)), Vector((0, 0, 1))), 8.5, 27.0, 40, 1.4)
+    for k in range(6):
+        box("radiator", (0.25, 3.0, 9.0), tuple(pp + Vector((5.6 + k * 1.1, -9.0 + k * 3.6, 0))), trim, 0.0, parent=fr)
+    for y in (-20.0, -2.0):
+        box("truss", (12.0, 1.4, 1.4), (14.5, y, 4.0), dark, 0.0, parent=fr)
+        box("truss", (12.0, 1.4, 1.4), (14.5, y, -4.0), dark, 0.0, parent=fr)
+    light("plant_beacon", tuple(pp + Vector((0, 0, 7.0))), 0.6, red, r, period=60, on=8)
     merge(fr, "frame_mesh")
-    # chasing lights round the aperture
-    for i in range(24):
-        a = i * 2 * math.pi / 24
-        light("chase", (math.cos(a) * (R - 2.5), 3.4, math.sin(a) * (R - 2.5)), 0.35, glow, r, period=48, on=6, phase=i * 2)
-        light("chase", (math.cos(a) * (R - 2.5), -3.4, math.sin(a) * (R - 2.5)), 0.35, glow, r, period=48, on=6,
-              phase=(24 - i) * 2 % 48)
-    # a slow counter-rotating outer collar
-    collar = root("collar")
-    collar.parent = r
-    for i in range(16):
-        a = i * math.pi / 8
+    # chasing lights down the rails toward the muzzle, and approach beacons leading in to the mouth
+    for i in range(4):
+        a = i * math.pi / 2 + math.pi / 4
         out = Vector((math.cos(a), 0, math.sin(a)))
-        box("collar_seg", (5.0, 1.8, 1.2), tuple(out * (R + 2.3)), dark, 0.15, rot=(0, -a + math.pi / 2, 0), parent=collar)
-        box("collar_light", (1.0, 1.9, 0.3), tuple(out * (R + 2.95)), lamp if i % 2 else glow, 0.0,
-            rot=(0, -a + math.pi / 2, 0), parent=collar)
-    cm = merge(collar, "collar_mesh")
-    cm.parent = collar
-    spin(collar, "Y", 600)
+        for k in range(12):
+            y = -50.0 + k * 9.0
+            light("rail_chase", tuple(out * 15.0 + Vector((0, y, 0))), 0.4, glow, r, period=48, on=6, phase=(k * 4) % 48)
+        for k in range(8):
+            y = -70.0 - k * 9.0
+            light("approach", tuple(out * 15.0 + Vector((0, y, 0))), 0.45, lamp, r, period=48, on=6, phase=((7 - k) * 5) % 48)
     export(r, os.path.join(PROPS, "gate.glb"))
 
 def rocks():

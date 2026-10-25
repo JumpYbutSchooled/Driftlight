@@ -22,7 +22,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	visible = main.mode in ["fly", "warp"] and main.player.alive and not main.debug
+	visible = main.mode == "fly" and main.player.alive and not main.debug
 	if not visible:
 		return
 	_refresh -= delta

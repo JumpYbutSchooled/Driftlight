@@ -90,6 +90,10 @@ func _draw() -> void:
 	if main.mode == "title":
 		return
 	var vs := size
+	if main.mode == "warp":
+		# warping: everything else gets out of the way
+		_text(Vector2(0, vs.y - 120.0), "warping...", 17, Color(UI.TEXT, 0.32), HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
+		return
 	var p = main.player
 	var st: Dictionary = p.st
 	if main.mode in ["fly", "warp"] and p.alive:
@@ -258,16 +262,24 @@ func _draw_selection(vs: Vector2, cam: Camera3D, pp: Vector3) -> void:
 			HORIZONTAL_ALIGNMENT_CENTER, 400)
 
 
-## Near a station, corner brackets round the mouth of its docking bay (and its distance), so it's easy to
-## line up on. Fly in to dock.
+## Near a station or stargate, corner brackets round the mouth of its docking bay or barrel (and its
+## distance), so it's easy to line up on. Fly in to dock, or to be fired down the gate.
 func _draw_bay(cam: Camera3D, pp: Vector3) -> void:
-	var lm: Dictionary = main.station_lm()
-	if lm.is_empty() or pp.distance_to(lm.pos) > 9000.0 or pp.distance_to(lm.bay.mouth) < 300.0:
+	for lm in main.landmarks:
+		if lm.has("bay"):
+			_bay_brackets(cam, pp, lm)
+
+
+func _bay_brackets(cam: Camera3D, pp: Vector3, lm: Dictionary) -> void:
+	var bay: Dictionary = lm.bay
+	var m: Vector3 = bay.mouth
+	if pp.distance_to(m) > 9000.0 or pp.distance_to(m) < 300.0:
 		return  # (and not once you're at the mouth or inside: then it's all round you)
-	var m: Vector3 = lm.bay.mouth
+	var right: Vector3 = bay.right
+	var up: Vector3 = right.cross(bay.out).normalized()
 	var pts := []
 	for c in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
-		var w: Vector3 = m + Vector3(c.x * 120.0, c.y * 67.5, 0.0)  # the mouth is 240 x 135 m, across X and Y
+		var w: Vector3 = m + right * c.x * bay.hw + up * c.y * bay.hh
 		if cam.is_position_behind(w):
 			return
 		pts.append(cam.unproject_position(w))
@@ -277,8 +289,11 @@ func _draw_bay(cam: Camera3D, pp: Vector3) -> void:
 		var b: Vector2 = pts[(i + 1) % 4]
 		draw_line(a, a.lerp(b, 0.2), col, 1.5)
 		draw_line(b, b.lerp(a, 0.2), col, 1.5)
-	var top: Vector2 = (pts[2] + pts[3]) / 2.0
-	_text(top + Vector2(-150, -12), "DOCKING BAY  %s" % UI.dist(pp.distance_to(m)), 14, col, HORIZONTAL_ALIGNMENT_CENTER, 300.0,
+	var e1: Vector2 = (pts[0] + pts[1]) / 2.0
+	var e2: Vector2 = (pts[2] + pts[3]) / 2.0
+	var top: Vector2 = e1 if e1.y < e2.y else e2  # label the upper edge
+	var label := "DOCKING BAY" if lm.kind == "station" else "GATE"
+	_text(top + Vector2(-150, -12), "%s  %s" % [label, UI.dist(pp.distance_to(m))], 14, col, HORIZONTAL_ALIGNMENT_CENTER, 300.0,
 		UI.title)
 
 
