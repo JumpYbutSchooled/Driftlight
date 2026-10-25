@@ -7,7 +7,7 @@ extends Node3D
 ## of the screen is on, and left click fires (a turret whose shot would pass through your own hull won't).
 ## Right-click selects what's under the crosshair; with something selected 1 approaches, 2 orbits, 3 warps
 ## to it and G docks / jumps / uses it. C frees the cursor (or hold ALT), wheel zooms, middle-click
-## puts the camera back behind the ship.
+## puts the camera back behind the ship. T: auto-travel along the plotted route, gates and warps and all.
 ## F1 is photo mode: the UI hides, the action freezes and you fly a free camera (P saves a picture).
 ##
 ## Space is big: things at one location are kilometres apart (warp between them with F), stations are
@@ -54,14 +54,20 @@ const Updater = preload("res://scripts/updater.gd")
 const AUTOSAVE_EVERY := 30.0  # save at least this often...
 const SAVE_AFTER_CHANGE := 5.0  # ...and within this many seconds of anything changing
 # warp timings (seconds, before Warp Core / ship bonuses): charge-up, then time in the warp tunnel
-const WARP_CHARGE := 2.0
-const WARP_BASE := 2.0
-const WARP_PER_UNIT := 3.0  # per system-map unit travelled (a system is about 2.2 units across)
+const WARP_CHARGE := 1.6
+const WARP_BASE := 0.8
+const WARP_PER_UNIT := 1.0  # per system-map unit travelled (a system is about 2.2 units across)
 # jumping to another system always takes longer than any warp inside a system
-const JUMP_CHARGE := 4.0
-const JUMP_BASE := 12.0
-const JUMP_PER_PX := 1.0 / 25.0  # per galaxy-map pixel between the two systems
-const WORMHOLE_TIME := 18.0
+const JUMP_CHARGE := 3.0
+const JUMP_BASE := 4.0
+const JUMP_PER_PX := 1.0 / 80.0  # per galaxy-map pixel between the two systems
+const WORMHOLE_TIME := 6.0
+const WARP_RUSH := 400000.0  # m/s the world streams away at once a jump's drive has charged: no build-up
+const CHARGE_SPEED := 22.0  # times top speed: how fast the charging drive drags the ship before the burst
+const LOCAL_WARP_SPEED := 12000.0  # m/s across a location: a steady, very fast run
+const JUMP_DRIVE_CHARGE := 5.0  # capital ships: the jump drive winds up longer...
+const JUMP_DRIVE_COOLDOWN := 20.0  # ...and needs a while to recharge
+const CAPITAL_DOCK := 4000.0  # capital ships can't fit in a bay: they tether to a station from this close
 const MOUSE_SENS := 0.0022  # radians of aim per pixel of mouse movement
 const FOV := 72.0
 const WARP_SCROLL_MAX := 1400.0  # m/s the background streams past inside the tunnel
@@ -73,8 +79,8 @@ const SCAN_RANGE := 7000.0  # survey scanner reach (V)
 const SCAN_COOLDOWN := 8.0
 # how far from each kind of thing you drop out of warp, and how close you must be to use it
 const ARRIVE := {"station": 5000.0, "gate": 1100.0, "ore": 3600.0, "obelisk": 700.0, "spice": 450.0, "wormhole": 1100.0,
-	"wreck": 450.0}
-const USE_RANGE := {"obelisk": 280.0, "spice": 170.0, "wormhole": 500.0, "wreck": 260.0}
+	"wreck": 450.0, "relic": 900.0}
+const USE_RANGE := {"obelisk": 280.0, "spice": 170.0, "wormhole": 500.0, "wreck": 260.0, "relic": 360.0}
 # the station's docking bay, relative to the station (it opens toward -Z; see props.py station()): the middle
 # of its mouth, the landing pad at the back, and the box you fly into to dock
 const BAY_MOUTH := Vector3(0, 0, -540)
@@ -86,10 +92,10 @@ const COLLECT_RANGE := 4000.0  # O: auto-collect reaches loose ore this far away
 # 5: cruise - a fast run to something far off in this location, threading round the rocks on the way
 const CRUISE_MIN := 700.0  # only worth it for things further than this
 const CRUISE_SPOOL := 1.2  # seconds the cruise drive takes to spool up
-const CRUISE_MULT := 12.0  # cruise speed: this many times the ship's normal top speed  # arriving at a station drops you this far out in front of the bay, lined up on it
+const CRUISE_MULT := 14.0  # cruise speed: this many times the ship's normal top speed
 # rough size of each thing (for picking it on screen and where "approach" stops)
 const SIZE := {"station": 1000.0, "gate": 150.0, "ore": 2600.0, "obelisk": 60.0, "spice": 25.0, "wormhole": 160.0,
-	"wreck": 35.0}
+	"wreck": 35.0, "relic": 80.0}
 
 var mode := "title"  # title, fly, warp, docked, panel, map, inventory, dialog, dead, admin
 var debug := false  # F3 overlay
@@ -141,8 +147,14 @@ var warp_fx
 var _zoom_to := 1.0
 var sun_dir_world := Vector3.UP  # towards this system's sun
 var _scan_cd := 0.0
-var _cam_yaw := 0.0  # the camera orbits the ship by these (world space, set by the mouse)
-var _cam_pitch := 0.0
+var _cam_q := Quaternion.IDENTITY  # where the mouse has swung the camera to: it orbits the ship freely, any way up
+var _cam_view := Quaternion.IDENTITY  # the camera's actual turn, easing after _cam_q
+var _shake_t := 0.0
+var _noise := FastNoiseLite.new()  # smooth camera shake
+var ap_power := 1.0  # how hard the autopilot pushes (R/F while it flies)
+var auto_travel := false  # T: following the route on its own, warps and gates and all
+var _jump_cd := 0.0  # jump drive recharge
+var _prev_mode := "title"
 var ui_layer: CanvasLayer
 var vignette_layer: CanvasLayer
 var photo := false  # F1 photo mode
@@ -250,6 +262,8 @@ func _ready() -> void:
 	root.add_child(fade)
 
 	Game.notify.connect(hud.push_message)
+	Game.jettisoned.connect(_on_jettison)
+	_noise.frequency = 0.9
 	player.setup()
 	enter_location(0, 0)
 	player.set_dead(true)
@@ -362,11 +376,12 @@ func _notification(what: int) -> void:
 
 func start_new_game() -> void:
 	Game.new_game()
-	if Game.admin:
-		Game.admin_fill()
+	if Game.sandbox:
+		Game.sandbox_fill()
 	_begin(0, 0)
 	Game.say("Welcome aboard the Wren! You have nothing but your ship. Go mine some Corrite.", Color("9fd3ff"))
 	Game.say("W/S pitch, Q/E turn, A/D roll, R/F throttle. The mouse looks around, click to fire. Hold SPACE to warp to the Core Belt.", Color("9fd3ff"))
+	Game.say("Lost? Press H for the Guide.", Color("9fd3ff"))
 	Game.save_game()
 
 
@@ -422,15 +437,28 @@ func _process(delta: float) -> void:
 		Input.mouse_mode = want_mouse
 	set_cursor("arrow" if want_mouse == Input.MOUSE_MODE_VISIBLE else "dot")
 	if mode == "title":
+		_prev_mode = mode
 		_update_camera(delta)
 		return
+	# the HUD flickers back on, piece by piece, when flight resumes after a warp, the docking screens or a respawn
+	if mode == "fly" and _prev_mode in ["warp", "launching", "title", "dead", "docked", "docking"]:
+		hud.flicker_in()
+	_prev_mode = mode
+	_jump_cd = maxf(0.0, _jump_cd - delta)
 	if not travel.is_empty():
 		_update_travel(delta)
 	player.turn_input = Vector3.ZERO
 	if mode == "fly":
 		_steer()
 		if not autopilot.is_empty():
+			# R/F set how hard the autopilot pushes, without taking the controls back
+			if Input.is_action_pressed("move_up"):
+				ap_power = minf(1.0, ap_power + 0.8 * delta)
+			elif Input.is_action_pressed("move_down"):
+				ap_power = maxf(0.2, ap_power - 0.8 * delta)
 			_update_autopilot(delta)
+		elif auto_travel and travel.is_empty() and player.alive:
+			_update_auto(delta)
 	if selected != null and not target_valid(selected):
 		selected = null
 	_scan_cd = maxf(0.0, _scan_cd - delta)
@@ -471,7 +499,7 @@ func _process(delta: float) -> void:
 			_wormhole_armed = true
 
 	var loc: Dictionary = current_loc()
-	if loc.pirates and mode != "dead":
+	if loc.pirates and mode != "dead" and not Game.peaceful:
 		if _pirate_timer >= 0.0:
 			_pirate_timer -= delta
 			if _pirate_timer < 0.0:
@@ -494,6 +522,7 @@ func _steer() -> void:
 	player.turn_input = Vector3(pitch, yaw, roll)
 	if yaw != 0.0 or pitch != 0.0 or roll != 0.0:
 		cancel_autopilot("Manual control")
+		stop_auto("Manual control")
 
 
 ## Is the cursor freed for clicking (C toggles it, holding ALT frees it for a moment)?
@@ -501,11 +530,28 @@ func cursor_free() -> bool:
 	return command or (mode in ["fly", "warp"] and Input.is_key_pressed(KEY_ALT))
 
 
-## Put the camera straight behind the ship (on arrival, and on a middle-click).
-func snap_camera() -> void:
-	var f: Vector3 = (-aim.z).normalized()
-	_cam_yaw = atan2(-f.x, -f.z)
-	_cam_pitch = asin(clampf(f.y, -1.0, 1.0))
+## Put the camera straight behind the ship, the ship's way up (on arrival at once; on a middle-click it
+## swings round).
+func snap_camera(instant := true) -> void:
+	_cam_q = aim.orthonormalized().get_rotation_quaternion()
+	if instant:
+		_cam_view = _cam_q
+
+
+## Swing the camera round the ship: `yaw` about its own up, `pitch` about its own right (radians). No limits:
+## it can go right over the top.
+func cam_turn(yaw: float, pitch: float) -> void:
+	_cam_q = (_cam_q * Quaternion(Vector3.UP, yaw) * Quaternion(Vector3.RIGHT, pitch)).normalized()
+
+
+## Point the camera along `dir`, keeping roughly its current up.
+func cam_look(dir: Vector3, instant := false) -> void:
+	var up: Vector3 = Basis(_cam_q).y
+	if absf(dir.normalized().dot(up)) > 0.98:
+		up = Basis(_cam_q).z
+	_cam_q = Basis.looking_at(dir.normalized(), up).get_rotation_quaternion()
+	if instant:
+		_cam_view = _cam_q
 
 
 ## Chase camera that orbits the ship as you move the mouse; the ship itself is flown with the keys.
@@ -520,16 +566,22 @@ func _update_camera(delta: float) -> void:
 		return
 	# mouse wheel zoom: from right behind the ship out to a kilometre or so
 	zoom = lerpf(zoom, _zoom_to, 1.0 - exp(-8.0 * delta))
-	camera.near = clampf(zoom * 0.12, 0.3, 6.0)
-	var view := Basis(Vector3.UP, _cam_yaw) * Basis(Vector3.RIGHT, _cam_pitch)
 	var r: float = player.radius
+	camera.near = clampf(zoom * 0.12 * maxf(1.0, r / 20.0), 0.3, 40.0)
+	# the turn eases in (no stepping from one mouse report to the next) and the camera follows the ship with a
+	# little give - bounded, so a fast ship never leaves it behind
+	_cam_view = _cam_view.slerp(_cam_q, 1.0 - exp(-24.0 * delta)).normalized()
+	var view := Basis(_cam_view)
 	var target: Vector3 = player.position + (view.y * (r * 0.75 + 2.0) + view.z * (r * 2.4 + 7.0)) * zoom
 	if not player.alive:
 		target = camera.global_position
-	camera.global_position = camera.global_position.lerp(target, 1.0 - exp(-12.0 * delta))
+	var lag: Vector3 = (camera.global_position - target) * exp(-14.0 * delta)
+	camera.global_position = target + lag.limit_length(r * 0.5 + 2.0)
 	camera.global_basis = view
-	camera.h_offset = randf_range(-1.0, 1.0) * _shake
-	camera.v_offset = randf_range(-1.0, 1.0) * _shake
+	# shake: smooth noise, not a fresh random jolt every frame
+	_shake_t += delta
+	camera.h_offset = _noise.get_noise_2d(_shake_t * 40.0, 0.0) * _shake * 1.8
+	camera.v_offset = _noise.get_noise_2d(0.0, _shake_t * 40.0 + 100.0) * _shake * 1.8
 	_shake = move_toward(_shake, 0.0, 2.5 * delta)
 	var speed_fov: float = 6.0 if player.boosting else (20.0 if player.cruise_v > 0.0 else 0.0)
 	var warp_fov := 0.0
@@ -585,8 +637,7 @@ func _input(event: InputEvent) -> void:
 	# the mouse swings the camera round the ship (it never steers it)
 	if event is InputEventMouseMotion and mode in ["fly", "warp", "dead"] and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED \
 			and not warp_menu.visible:
-		_cam_yaw = wrapf(_cam_yaw - event.relative.x * MOUSE_SENS, -PI, PI)
-		_cam_pitch = clampf(_cam_pitch - event.relative.y * MOUSE_SENS, -1.45, 1.45)
+		cam_turn(-event.relative.x * MOUSE_SENS, -event.relative.y * MOUSE_SENS)
 
 
 ## Closes the quick warp menu and warps to whatever is highlighted (nothing, if it's Cancel).
@@ -631,7 +682,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_zoom_to = clampf(_zoom_to * 1.15, ZOOM_MIN, ZOOM_MAX)
 				return
 			MOUSE_BUTTON_MIDDLE:
-				snap_camera()
+				snap_camera(false)
 				return
 			MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_LEFT:
 				# right-click selects what's under the crosshair (or under the cursor, once C has freed it);
@@ -661,10 +712,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.is_action_pressed("collect"):
 			toggle_collect()
 			return
-		if not autopilot.is_empty() and (event.is_action_pressed("move_up") or event.is_action_pressed("move_down")
-				or event.is_action_pressed("cut_throttle")):
-			cancel_autopilot("Manual control")
-	if event.is_action_pressed("admin") and Game.admin:
+		if event.is_action_pressed("cut_throttle"):
+			cancel_autopilot("Brakes")
+			stop_auto("Brakes")
+		if event.is_action_pressed("auto_travel"):
+			toggle_auto()
+			return
+		if event.is_action_pressed("guide"):
+			mode = "inventory"
+			inventory.open("guide")
+			return
+	if event.is_action_pressed("admin") and Game.sandbox:
 		if mode == "fly":
 			mode = "admin"
 			admin_panel.open()
@@ -677,7 +735,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("interact") and mode == "fly":
 		var near = _nearest_interactable()
-		var port := near_port(3500.0)
+		var port := near_port(3500.0 + (CAPITAL_DOCK if player.st.capital else 0.0))
 		if near:
 			near.action.call()
 		elif not port.is_empty():
@@ -727,7 +785,7 @@ func _update_screen_fx(delta: float) -> void:
 	var phase: String = travel.get("phase", "")
 	var want := 0.0
 	var glow := Color(0, 0, 0, 0)
-	var cruising: bool = player.cruise_v > 0.0 and player.vel.length() > player.top_speed() * 3.0
+	var cruising: bool = player.cruise_v > 0.0 and player.vel.length() > player.top_speed() * 3.0 and autopilot.get("mode", "") != "dock"
 	match phase:
 		"charge":
 			var k: float = clampf(travel.t / travel.charge, 0.0, 1.0)
@@ -910,10 +968,14 @@ func _check_docking() -> void:
 			return
 	if not inside:
 		_dock_armed = true
-	var lm := near_port(3500.0)
+	var big: bool = player.st.capital
+	var lm := near_port(3500.0 + (CAPITAL_DOCK if big else 0.0))
 	if hud.prompt == "" and not lm.is_empty() and not inside:
 		var station: bool = lm.kind == "station"
-		if autopilot.get("mode", "") == "dock":
+		if big:
+			hud.prompt = ("Too big for the bay: G to dock by tether" if station else "G: jump through the gate to %s" % lm.bay.dest) \
+				if autopilot.is_empty() else autopilot_text()
+		elif autopilot.get("mode", "") == "dock":
 			hud.prompt = "Docking autopilot engaged" if station else "Autopilot: lining up on the gate"
 		else:
 			hud.prompt = "Fly into the docking bay to dock   -   G: docking autopilot" if station \
@@ -992,6 +1054,8 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 			if loc.wormhole >= 0:
 				feats.append("wormhole")
 			feats.append("ore")
+	if loc.get("relic", false):
+		feats.append("relic")
 	# the things here sit kilometres apart: fly between them, or warp (F)
 	var base_ang := rng.randf() * TAU
 	for k in feats.size():
@@ -1024,12 +1088,12 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 	if first.get("kind", "") == "station":
 		# traffic control drops you into the station's approach lane, in front of the docking bay. Out of a
 		# warp you keep the heading you warped along (and glide on), rather than snapping round to the station.
-		player.position = first.bay.mouth + first.bay.out * BAY_LANE * 1.3 + Vector3(randf_range(-80, 80), randf_range(-20, 20), 0)
+		player.position = first.bay.mouth + first.bay.out * (BAY_LANE * 1.3 + _big_clear()) + Vector3(randf_range(-80, 80), randf_range(-20, 20), 0)
 		var face: Vector3 = dir if warped_in else (first.bay.mouth - player.position).normalized()
 		aim = Basis.looking_at(face, Vector3.UP if absf(face.y) < 0.98 else Vector3.RIGHT)
 	elif first.get("kind", "") == "gate":
 		# arriving by gate you come in from the system you left, off to one side of this end of the gate
-		player.position += dir.cross(Vector3.UP).normalized() * 280.0
+		player.position += dir.cross(Vector3.UP).normalized() * (280.0 + _big_clear()) - dir * _big_clear()
 		aim = Basis.looking_at(dir if warped_in else (first.pos - player.position).normalized(), Vector3.UP)
 	_dock_armed = true
 	player.basis = aim
@@ -1042,16 +1106,40 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 		_pirate_timer = 1.5
 	if mode == "title":
 		return
+	Game.note_loc(sys_id, loc_i)
 	if prev_sys != sys_id or hud._title == "":
-		var sub := "%s System" % Game.CAT_NAMES[sys.cat]
+		var sub := "%s System  -  %s" % [Game.CAT_NAMES[sys.cat], Game.REGIONS[sys.region].name]
 		if sys.cat == Game.CAT_PURPLE:
 			sub += "  -  DANGER: heavy pirate activity"
 		hud.show_title(sys.name.to_upper(), Game.CAT_COLORS[sys.cat], sub)
 		Game.event("visit", {"sys": sys_id, "new": new_sys})
+		if sys.cat == Game.CAT_PURPLE and player.st.sense > 0.0:
+			_sense_anomalies(sys)
 		if sys_id == Game.route_target:
-			Game.route_target = -1
-			Game.say("You have reached your destination.", UI.GOLD)
+			if Game.next_stop():
+				Game.say("Stop reached: %s. Next stop %s." % [sys.name, Game.systems[Game.route_target].name], UI.GOLD)
+			else:
+				Game.say("You have reached your destination.", UI.GOLD)
+				stop_auto()
 		Game.save_game()
+
+
+## Anomaly Sense: arriving in a Wild system, it pings any hidden anomalies there.
+func _sense_anomalies(sys: Dictionary) -> void:
+	var n := 0
+	for l in sys.locs:
+		if l.kind == "anomaly" and not l.found:
+			l.found = true
+			n += 1
+			Game.event("anomaly")
+	if n > 0:
+		Sfx.play("found", -4.0)
+		Game.say("Anomaly Sense: %d hidden anomal%s here - check the warp menu." % [n, "y" if n == 1 else "ies"], Color("e080ff"))
+
+
+## How much further out a capital ship has to sit from things to clear them (0 for anything that fits a bay).
+func _big_clear() -> float:
+	return player.radius * 2.5 if player.st.get("capital", false) else 0.0
 
 
 func _ring_point(rng: RandomNumberGenerator, rmin: float, rmax: float, h: float) -> Vector3:
@@ -1270,6 +1358,25 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			_wormhole.position = at
 			world.add_child(_wormhole)
 			_landmark("Wormhole", "wormhole", "anomaly", at, enter_wormhole, "[G]  Enter the wormhole (or fly into it)")
+		"relic":
+			# an ancient relic: a broken alien structure round a slowly turning glowing crystal
+			var ruin := Models.prop("wreck")
+			ruin.scale *= 3.0
+			ruin.position = at
+			world.add_child(ruin)
+			var crystal := MeshInstance3D.new()
+			crystal.mesh = Models.crystal_mesh()
+			crystal.material_override = Models.bright_mat(Color("7fd8ff"), 3.0)
+			crystal.scale = Vector3.ONE * 22.0
+			crystal.position = at + Vector3(0, 70, 0)
+			world.add_child(crystal)
+			var tw := crystal.create_tween().set_loops()
+			tw.tween_property(crystal, "rotation:y", TAU, 9.0).from(0.0)
+			_light(at + Vector3(0, 70, 0), Color("7fd8ff"), 420.0, 3.0)
+			var lm := _landmark("Ancient Relic", "relic", "star", at + Vector3(0, 40, 0), null, "[G]  Decode the ancient relic")
+			lm["action"] = _decode_relic.bind(lm, Game.current_system, Game.current_loc)
+			interactables.append(lm)
+			_obstacle("sphere", {"c": at, "r": 110.0})
 
 
 func _light(pos: Vector3, color: Color, range_m: float, energy: float) -> OmniLight3D:
@@ -1284,12 +1391,13 @@ func _light(pos: Vector3, color: Color, range_m: float, energy: float) -> OmniLi
 
 ## An ore field: dozens of huge mineable veins spread over a few kilometres, a couple of giant ones,
 ## a haze of smaller loose rocks between them and drifting dust clouds.
-func _spawn_field(center: Vector3, sys: Dictionary, anomaly: bool, rng: RandomNumberGenerator) -> void:
-	var count := rng.randi_range(55, 75) if anomaly else rng.randi_range(40, 60)
-	var spread := 3000.0 if anomaly else 2600.0
+func _spawn_field(center: Vector3, sys: Dictionary, anomaly: bool, rng: RandomNumberGenerator, only_ore := "") -> void:
+	# anomalies hold enormous fields: hundreds of veins of every ore, with mountains among them
+	var count := rng.randi_range(170, 230) if anomaly else rng.randi_range(40, 60)
+	var spread := 7500.0 if anomaly else 2600.0
 	fields.append({"c": center, "r": spread * 1.3 + 600.0})
 	var placed := []
-	var giants := rng.randi_range(1, 3)
+	var giants := rng.randi_range(5, 9) if anomaly else rng.randi_range(1, 3)
 	for i in count + giants:
 		var giant := i >= count
 		var amount := rng.randi_range(40, 100) if anomaly else rng.randi_range(15, 100)
@@ -1303,25 +1411,25 @@ func _spawn_field(center: Vector3, sys: Dictionary, anomaly: bool, rng: RandomNu
 			if placed.all(func(q): return q[0].distance_to(p) > q[1] + size + 60.0):
 				break
 		placed.append([p, size])
-		var roll := Game.roll_ore(sys, anomaly)
+		var roll := Game.roll_ore(sys, anomaly) if only_ore == "" else [only_ore, rng.randi_range(1, 3)]
 		var a := Asteroid.new()
 		a.main = self
 		a.position = p
 		world.add_child(a)
 		a.setup(roll[0], roll[1], amount, rng.randi(), size)
-	_spawn_pebbles(center, spread, rng)
-	_spawn_clouds(center, spread, Game.CAT_COLORS[sys.cat], rng)
+	_spawn_pebbles(center, spread, rng, 3 if not anomaly else 6)
+	_spawn_clouds(center, spread, Game.CAT_COLORS[sys.cat], rng, 1 if not anomaly else 3)
 
 
 ## Hundreds of small loose rocks (not mineable) filling out the field.
-func _spawn_pebbles(center: Vector3, spread: float, rng: RandomNumberGenerator) -> void:
+func _spawn_pebbles(center: Vector3, spread: float, rng: RandomNumberGenerator, sets := 3) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.13, 0.12, 0.11)
 	mat.roughness = 0.95
-	for k in 3:
+	for k in sets:
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.mesh = Models.rock_mesh(k * 2 + 1)
+		mm.mesh = Models.rock_mesh(k * 2 + 1 + floori(k / 3.0))
 		mm.instance_count = 320
 		for i in mm.instance_count:
 			var s := lerpf(0.8, 28.0, pow(rng.randf(), 3.5))
@@ -1334,8 +1442,8 @@ func _spawn_pebbles(center: Vector3, spread: float, rng: RandomNumberGenerator) 
 
 
 ## Big soft clouds of dust hanging in the field, tinted a little by the system's colour.
-func _spawn_clouds(center: Vector3, spread: float, tint: Color, rng: RandomNumberGenerator) -> void:
-	for i in rng.randi_range(8, 13):
+func _spawn_clouds(center: Vector3, spread: float, tint: Color, rng: RandomNumberGenerator, mult := 1) -> void:
+	for i in rng.randi_range(8, 13) * mult:
 		var m := StandardMaterial3D.new()
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -1403,6 +1511,21 @@ func _spawn_traffic(sys: Dictionary, rng: RandomNumberGenerator) -> void:
 			n.position = field.pos + _ring_point(rng, 200.0, 1500.0, 200.0)
 			world.add_child(n)
 			n.setup("miner", ["prospector", "mule", "bastion"][rng.randi() % 3], rng)
+
+func _decode_relic(lm: Dictionary, sys_id: int, loc_i: int) -> void:
+	if not lm.has("action"):
+		return
+	interactables.erase(lm)
+	lm.erase("action")
+	Game.mark_relic(sys_id, loc_i)
+	var txt := Game.decode_relic(Game.systems[sys_id])
+	sparks(lm.pos, Color("7fd8ff"), 40)
+	_flash(0.25)
+	Sfx.play("found", -2.0)
+	Game.toast.emit("ANCIENT RELIC", txt.replace("Decoded the relic: ", ""), "star", Color("7fd8ff"))
+	Game.say(txt, Color("7fd8ff"))
+	Game.note_loc(sys_id, loc_i)
+
 
 func salvage_wreck(w, it: Dictionary, sys_id: int, loc_i: int) -> void:
 	if w.salvaged:
@@ -1640,11 +1763,12 @@ func target_info(t) -> Dictionary:
 		return {"name": "", "icon": "radar", "color": Color.WHITE, "sub": "", "use": ""}
 	if t is Dictionary:
 		var uses := {"station": "Dock", "gate": "Jump", "wormhole": "Enter", "wreck": "Salvage", "obelisk": "Approach",
-			"spice": "Browse"}
+			"spice": "Browse", "relic": "Decode"}
 		var sub := {"station": "Station  -  dock to refine, trade, build and repair", "gate": "Stargate  -  jump to another system",
 			"ore": "Asteroid field  -  huge ore veins to mine", "obelisk": "Offering Obelisk  -  make an offering for a blessing",
 			"spice": "Spice Stand  -  a trader in the middle of nowhere", "wormhole": "Wormhole  -  leads deep into Wild space",
-			"wreck": "Derelict  -  salvage it for parts" if t.has("action") else "Derelict  -  already salvaged"}
+			"wreck": "Derelict  -  salvage it for parts" if t.has("action") else "Derelict  -  already salvaged",
+			"relic": "Ancient relic  -  decode it for whatever it remembers" if t.has("action") else "Ancient relic  -  decoded"}
 		return {"name": t.name, "icon": t.icon, "color": Color("ffe066"), "sub": sub.get(t.kind, ""),
 			"use": uses.get(t.kind, "") if t.has("action") else ""}
 	if t.is_in_group("asteroids"):
@@ -1749,39 +1873,55 @@ func order(what: String) -> void:
 	var t = selected
 	var d: float = player.position.distance_to(target_pos(t))
 	var size := target_size(t)
+	var r: float = player.radius
 	match what:
 		"approach":
-			_start_autopilot("approach", t, size + player.radius + (60.0 if t is Dictionary else 25.0))
+			_start_autopilot("approach", t, size + r + (60.0 if t is Dictionary else 25.0))
 		"orbit":
-			_start_autopilot("orbit", t, size + player.radius + (250.0 if t is Dictionary else 60.0))
+			_start_autopilot("orbit", t, size + r + (250.0 if t is Dictionary else 60.0))
 		"cruise":
 			if _bay_blocks():
 				return
-			var stop: float = size + player.radius + (250.0 if t is Dictionary else 80.0)
-			if d <= stop + CRUISE_MIN:
-				_start_autopilot("approach", t, stop)
-				return
-			_start_autopilot("cruise", t, stop)
-			autopilot["t"] = 0.0
-			Sfx.play("charge", -7.0, 2.2 / CRUISE_SPOOL)
+			_start_autopilot("cruise", t, size + r + (250.0 if t is Dictionary else 80.0))
 		"use":
 			if not (t is Dictionary and t.has("action")):
 				return
 			if t.has("bay"):
-				_start_autopilot("dock", t, 0.0)  # stations: fly into the docking bay
+				if player.st.capital:
+					# too big for a bay or a gate's bore: tether to the station, or jump from near the gate
+					var reach: float = CAPITAL_DOCK + r
+					if d <= reach:
+						_use_port(t)
+					else:
+						_start_autopilot("use", t, reach * 0.8)
+					return
+				_start_autopilot("dock", t, 0.0)  # fly into the docking bay / the gate's mouth
 				return
-			if d <= t.radius:
+			if d <= t.radius + r:
 				t.action.call()
 			else:
-				_start_autopilot("use", t, t.radius * 0.8)
+				_start_autopilot("use", t, t.radius * 0.8 + r)
 		"warp":
 			if _bay_blocks():
 				return
 			if d <= LOCAL_WARP_MIN:
 				Game.say("Too close to warp - approaching instead.", UI.MUTED)
-				_start_autopilot("approach", t, size + player.radius + 60.0)
+				_start_autopilot("approach", t, size + r + 60.0)
 				return
 			warp_local(t)
+
+
+## A capital ship docks by tether (the view fades as the station takes it), or jumps straight from near a gate.
+func _use_port(lm: Dictionary) -> void:
+	cancel_autopilot()
+	if lm.kind == "station":
+		_docked_bay = lm.bay
+		mode = "docking"
+		player.throttle = 0.0
+		player.cruise_v = 0.0
+		dock_screen.dock(lm.name, lm.action)
+	else:
+		lm.action.call()
 
 
 func _start_autopilot(what: String, t, range_m: float) -> void:
@@ -1789,7 +1929,7 @@ func _start_autopilot(what: String, t, range_m: float) -> void:
 	var axis := to.cross(player.forward())
 	if axis.length() < 0.01:
 		axis = Vector3.UP
-	autopilot = {"mode": what, "target": t, "range": range_m, "axis": axis.normalized()}
+	autopilot = {"mode": what, "target": t, "range": range_m, "axis": axis.normalized(), "t": 0.0}
 	Sfx.play("click", -8.0)
 
 
@@ -1805,17 +1945,25 @@ func cancel_autopilot(why := "") -> void:
 func autopilot_text() -> String:
 	if autopilot.is_empty():
 		return ""
+	var pw := "" if ap_power >= 0.999 else "   (power %d%%)" % roundi(ap_power * 100.0)
 	if autopilot.mode == "collect":
-		return "Collecting loose ore  -  %d pieces in reach" % get_tree().get_nodes_in_group("chunks").filter(
-			func(c): return c.position.distance_to(player.position) < COLLECT_RANGE).size()
+		return "Collecting loose ore  -  %d pieces in reach%s" % [get_tree().get_nodes_in_group("chunks").filter(
+			func(c): return c.position.distance_to(player.position) < COLLECT_RANGE).size(), pw]
 	var d: float = player.position.distance_to(target_pos(autopilot.target))
+	var left := UI.dist(maxf(0.0, d - autopilot.range))
+	var drive := ""
+	if autopilot.get("engaged", false):
+		drive = "Cruising  -  "
+	elif autopilot.get("spool", 0.0) > 0.0:
+		drive = "Cruise drive spooling...  -  "
 	match autopilot.mode:
-		"cruise": return ("Cruise drive spooling up..." if autopilot.t < CRUISE_SPOOL else "Cruising  -  %s to go" % UI.dist(
-			maxf(0.0, d - autopilot.range)))
-		"orbit": return "Orbiting at %s" % UI.dist(autopilot.range)
-		"dock": return "Docking approach  -  %s to the pad" % UI.dist(player.position.distance_to(autopilot.target.bay.pad))
-		"use": return "Approaching to %s  -  %s to go" % [target_info(autopilot.target).use.to_lower(), UI.dist(maxf(0.0, d - autopilot.range))]
-	return "Approaching  -  %s to go" % UI.dist(maxf(0.0, d - autopilot.range))
+		"orbit": return "Orbiting at %s%s" % [UI.dist(autopilot.range), pw]
+		"dock":
+			var goal := _dock_goal(autopilot.target)
+			return "%s%s  -  %s to the %s%s" % [drive, "Docking approach" if autopilot.target.kind == "station" else "Gate approach",
+				UI.dist(player.position.distance_to(goal)), "pad" if goal == autopilot.target.bay.pad else "approach lane", pw]
+		"use": return "%sApproaching to %s  -  %s to go%s" % [drive, target_info(autopilot.target).use.to_lower(), left, pw]
+	return "%sApproaching  -  %s to go%s" % [drive, left, pw]
 
 
 ## O: the autopilot flies you from one loose chunk of ore to the next, nearest first, collecting them,
@@ -1827,7 +1975,7 @@ func toggle_collect() -> void:
 	if _nearest_chunk() == null:
 		Game.say("No loose ore within %s." % UI.dist(COLLECT_RANGE), UI.MUTED)
 		return
-	autopilot = {"mode": "collect"}
+	autopilot = {"mode": "collect", "t": 0.0}
 	Sfx.play("click", -8.0)
 	Game.say("Collecting loose ore - O or any flight key to stop.", Color("8cd8ff"))
 
@@ -1836,7 +1984,7 @@ func _nearest_chunk():
 	var best = null
 	var bd := COLLECT_RANGE
 	for c in get_tree().get_nodes_in_group("chunks"):
-		if c.is_queued_for_deletion():
+		if c.is_queued_for_deletion() or c.pick_cd > 0.0:
 			continue
 		var d: float = player.position.distance_to(c.position)
 		if d < bd:
@@ -1845,94 +1993,169 @@ func _nearest_chunk():
 	return best
 
 
-func _update_collect(delta: float) -> void:
-	if Game.cargo_used() >= player.st.cargo:
-		cancel_autopilot("Cargo hold full")
-		return
-	var c = _nearest_chunk()
-	if c == null:
-		autopilot = {}
-		Game.say("All the loose ore in reach is collected.", UI.GOOD)
-		return
-	var to: Vector3 = c.position - player.position
-	var d := to.length()
-	var dir := to / maxf(d, 0.01)
-	# full ahead when far, easing off as it closes so it doesn't overshoot; turn first if it's off the nose
-	player.throttle = clampf(d / (player.top_speed() * 3.0), 0.15, 1.0)
-	if player.forward().dot(dir) < 0.6:
-		player.throttle = minf(player.throttle, 0.15)
-	var up := aim.y if absf(dir.dot(aim.y)) < 0.95 else Vector3.UP
-	var want := Basis.looking_at(dir, up).get_rotation_quaternion()
-	aim = Basis(aim.get_rotation_quaternion().slerp(want, minf(1.0, 3.0 * delta))).orthonormalized()
-
-
-## Steers (by swinging the aim, which the ship follows) and works the throttle for approach / orbit / use.
+## Steers (by swinging the aim, which the ship follows) and works the throttle and cruise drive.
 func _update_autopilot(delta: float) -> void:
 	if autopilot.mode == "collect":
-		_update_collect(delta)
+		if Game.cargo_used() >= player.st.cargo:
+			cancel_autopilot("Cargo hold full")
+			return
+		var c = _nearest_chunk()
+		if c == null:
+			autopilot = {}
+			player.cruise_v = 0.0
+			Game.say("All the loose ore in reach is collected.", UI.GOOD)
+			return
+		# near enough and the tractor beam does the rest
+		_drive(c.position, minf(player.tractor_range() * 0.4, 400.0), delta, true, true)
 		return
 	var t = autopilot.target
 	if not target_valid(t):
 		autopilot = {}
+		player.cruise_v = 0.0
 		return
-	var to: Vector3 = target_pos(t) - player.position
-	if autopilot.mode == "dock":
-		to = _dock_goal(t) - player.position
-	var d := to.length()
 	var top: float = player.top_speed()
-	var dir := to / maxf(d, 0.01)
 	match autopilot.mode:
-		"cruise":
-			autopilot.t += delta
-			var left: float = d - autopilot.range
-			if left <= 0.0:
-				player.cruise_v = 0.0
+		"approach", "use", "cruise":
+			if _drive(target_pos(t), autopilot.range, delta) <= 0.0:
 				player.throttle = 0.0
-				autopilot = {}
-				return
-			if autopilot.t < CRUISE_SPOOL:
-				# spooling up: swing round onto the line and creep forward, the ship trembling
 				player.cruise_v = 0.0
-				player.throttle = 0.2
-				shake(autopilot.t / CRUISE_SPOOL * 0.2)
-			elif not autopilot.get("engaged", false):
-				# the cruise drive kicks in
+				var arrived = autopilot
+				autopilot = {}
+				if arrived.mode == "use" and t is Dictionary and t.has("action"):
+					if t.has("bay"):
+						_use_port(t)
+					else:
+						t.action.call()
+		"dock":
+			var goal := _dock_goal(t)
+			if goal == t.bay.pad:
+				# lined up on the bay (or the gate's bore): straight in, fast, slowing onto the pad - a gate fires
+				# you on through at cruising speed anyway
+				var to: Vector3 = goal - player.position
+				var d := to.length()
+				var station: bool = t.kind == "station"
+				player.throttle = 0.0
+				player.cruise_v = clampf(d * (0.7 if station else 1.0), top * (0.7 if station else 2.0),
+					top * (4.0 if station else CRUISE_MULT) * ap_power)
+				if player.forward().dot(to / maxf(d, 0.01)) < 0.9:
+					player.cruise_v = maxf(top * 0.4, player.cruise_v * 0.4)  # get the nose on it first
+				_steer_to(to / maxf(d, 0.01), delta)
+			else:
+				_drive(goal, 0.0, delta, true, true)
+		"orbit":
+			var to: Vector3 = target_pos(t) - player.position
+			var d := to.length()
+			var radial := -to / maxf(d, 0.01)
+			var tangent: Vector3 = (autopilot.axis as Vector3).cross(radial).normalized()
+			var dir := (tangent + radial * clampf((autopilot.range - d) / autopilot.range * 3.0, -1.5, 1.5)).normalized()
+			player.throttle = 0.8 * ap_power
+			player.cruise_v = 0.0
+			_steer_to(dir, delta)
+
+
+## The autopilot's one way of getting somewhere. It turns onto the line, opening the throttle as the nose
+## comes round; on a long run it spools the cruise drive once lined up and races there at many times top
+## speed - round stations and gates, threading between the rocks, slowing for anything dead ahead - and
+## eases off to stop `stop` metres short (or, with `through`, arrives still moving). R/F scale how hard it
+## pushes. Returns how far there is left to go.
+func _drive(goal: Vector3, stop: float, delta: float, cruise := true, through := false) -> float:
+	var p: Vector3 = player.position
+	var to := goal - p
+	var d := to.length()
+	var left := d - stop
+	var top: float = player.top_speed()
+	var fast: float = top * CRUISE_MULT * ap_power
+	var dir := _detour(p, goal, to / maxf(d, 0.01))
+	var speed: float = player.vel.length()
+	dir = _avoid(dir, maxf(speed, 60.0))
+	var aligned: float = player.forward().dot(dir)
+	var cruising: bool = autopilot.get("engaged", false)
+	if cruising:
+		var clear := _clear_ahead(dir, maxf(speed * 2.0, 400.0))
+		player.throttle = 0.0
+		player.cruise_v = clampf(minf(left * 0.9 + (top * 3.0 if through else 0.0), clear * 0.7), top, fast)
+		if aligned < 0.6:
+			player.cruise_v = maxf(top, player.cruise_v * 0.5)  # a hard turn: ease off through it
+		if left < top * 1.5 or left <= 0.0:
+			autopilot["engaged"] = false
+			player.cruise_v = 0.0
+	elif cruise and left > CRUISE_MIN and not in_bay():
+		# spool the cruise drive while lined up, creeping forward
+		player.cruise_v = 0.0
+		player.throttle = clampf((aligned - 0.3) / 0.6, 0.15, 1.0) * ap_power
+		if aligned > 0.92:
+			if autopilot.get("spool", 0.0) <= 0.0:
+				Sfx.play("charge", -8.0, 2.2 / CRUISE_SPOOL)
+			autopilot["spool"] = autopilot.get("spool", 0.0) + delta
+			shake(minf(autopilot.spool / CRUISE_SPOOL, 1.0) * 0.15)
+			if autopilot.spool >= CRUISE_SPOOL:
 				autopilot["engaged"] = true
+				autopilot["spool"] = 0.0
 				_flash(0.15)
 				_fov_kick = 16.0
 				shake(0.35)
 				Sfx.play("warp", -5.0, 1.5)
-				player.cruise_v = top * 3.0
-			else:
-				# hold cruise speed, easing back down to normal flight speed over the last stretch
-				player.cruise_v = clampf(left * 0.9, player.top_speed(), top * CRUISE_MULT + 60.0)
-			dir = _avoid(dir, maxf(player.vel.length(), 60.0))
-		"dock":
-			# full ahead to the approach lane, then in under half throttle, easing off toward the pad
-			var lined_up: bool = _dock_goal(t) == t.bay.pad
-			player.throttle = clampf(d / (top * 5.0), 0.25, 0.5) if lined_up else 1.0
-			# don't push on until the nose is roughly where we're going
-			if player.forward().dot(dir) < 0.7:
-				player.throttle = minf(player.throttle, 0.15)
-		"approach", "use":
-			var left: float = d - autopilot.range
-			if left <= 0.0:
-				player.throttle = 0.0
-				var arrived = autopilot
-				autopilot = {}
-				if arrived.mode == "use" and t is Dictionary and t.has("action"):
-					t.action.call()
-				return
-			# ease off near the end so you stop about where you meant to
-			player.throttle = clampf(left / (top * 2.0), 0.12, 1.0)
-		"orbit":
-			var radial := -dir
-			var tangent: Vector3 = (autopilot.axis as Vector3).cross(radial).normalized()
-			dir = (tangent + radial * clampf((autopilot.range - d) / autopilot.range * 3.0, -1.5, 1.5)).normalized()
-			player.throttle = 0.8
+				player.cruise_v = maxf(speed, top * 3.0)
+		else:
+			autopilot["spool"] = 0.0
+	else:
+		player.cruise_v = 0.0
+		var want := 1.0 if through else clampf(left / (top * 1.8), 0.12, 1.0)
+		player.throttle = want * clampf((aligned - 0.2) / 0.6, 0.15, 1.0) * ap_power
+	_steer_to(dir, delta)
+	return left
+
+
+## Swing the aim (which the ship turns to follow, at its own pace) toward `dir`.
+func _steer_to(dir: Vector3, delta: float) -> void:
 	var up := aim.y if absf(dir.dot(aim.y)) < 0.95 else Vector3.UP
+	if absf(dir.dot(up)) > 0.99:
+		up = Vector3.RIGHT
 	var want := Basis.looking_at(dir, up).get_rotation_quaternion()
-	aim = Basis(aim.get_rotation_quaternion().slerp(want, minf(1.0, 2.5 * delta))).orthonormalized()
+	aim = Basis(aim.get_rotation_quaternion().slerp(want, minf(1.0, 8.0 * delta))).orthonormalized()
+
+
+## Round the stations and gates rather than through them: if the line to `goal` passes too close to one,
+## head for a point out to the side of it instead.
+func _detour(p: Vector3, goal: Vector3, dir: Vector3) -> Vector3:
+	var seg := goal - p
+	var l2 := maxf(seg.length_squared(), 1.0)
+	for lm in landmarks:
+		if not lm.has("bay"):
+			continue
+		var c: Vector3 = lm.pos
+		var clear: float = lm.bay.clear + player.radius
+		if p.distance_to(c) < clear or goal.distance_to(c) < clear:
+			continue  # already close (docking) or going there: the docking approach handles it
+		var k := clampf((c - p).dot(seg) / l2, 0.0, 1.0)
+		var closest := p + seg * k
+		if closest.distance_to(c) >= clear:
+			continue
+		var side := closest - c
+		if side.length() < 1.0:
+			side = seg.cross(Vector3.UP)
+			if side.length() < 1.0:
+				side = Vector3.RIGHT
+		var way := c + side.normalized() * (clear + 250.0)
+		return (way - p).normalized()
+	return dir
+
+
+## How far ahead along `dir` the way is clear of rocks and ships (INF if it is, as far as `look`): the cruise
+## drive slows for anything it can't steer round in time.
+func _clear_ahead(dir: Vector3, look: float) -> float:
+	var p: Vector3 = player.position
+	var best := INF
+	for g in ["asteroids", "npcs"]:
+		for a in group(g):
+			var rel: Vector3 = a.position - p
+			var along := rel.dot(dir)
+			if along < 0.0 or along > look + a.radius:
+				continue
+			var miss := (rel - dir * along).length()
+			if miss < a.radius + player.radius + 10.0:
+				best = minf(best, along - a.radius)
+	return maxf(best, 0.0)
 
 
 ## Cruise steering: bend `dir` away from any rock (or ship) in the way ahead, harder the closer and more
@@ -1957,25 +2180,209 @@ func _avoid(dir: Vector3, speed: float) -> Vector3:
 	return (dir + push * 2.5).normalized() if push != Vector3.ZERO else dir
 
 
-## Admin: straight to any system through a short jump, arriving at its first planet.
+# ---------------------------------------------------------------- auto-travel, jump drive, portable wormholes
+
+## T: fly the plotted route on its own - warp to each gate, fly in, jump, on to the next (straight there by
+## jump drive, if the ship has one). Asks once, up front, if the route goes through Wild space.
+func toggle_auto() -> void:
+	if auto_travel:
+		stop_auto("Auto-travel off")
+		return
+	if Game.route_target < 0 or Game.route_target == Game.current_system:
+		Game.say("Plot a route on the galaxy map (M) first, then press T.", UI.MUTED)
+		return
+	var wild := 0
+	var at := Game.current_system
+	for stop_id in [Game.route_target] + Game.route_stops:
+		for id in Game.find_path(at, stop_id):
+			if Game.systems[id].cat == Game.CAT_PURPLE:
+				wild += 1
+		at = stop_id
+	if wild > 0:
+		ask("Your route goes through %d Wild system%s: pirates everywhere, and you lose your cargo if you're destroyed.\n\nAuto-travel the whole way?" % [
+			wild, "" if wild == 1 else "s"], "Go", _start_auto)
+	else:
+		_start_auto()
+
+
+func _start_auto() -> void:
+	auto_travel = true
+	Sfx.play("charge", -8.0, 1.6)
+	Game.say("Auto-travel: %d jumps to %s. T, X or any flight key stops it." % [Game.route_jumps(), Game.systems[Game.route_target].name],
+		Color("8cd8ff"))
+
+
+func stop_auto(why := "") -> void:
+	if not auto_travel:
+		return
+	auto_travel = false
+	if why != "":
+		Game.say(why + ".", UI.MUTED)
+
+
+## One step of auto-travel, whenever the ship is free: pick the next warp, gate or jump.
+func _update_auto(_delta: float) -> void:
+	if Game.route_target < 0 or Game.route_target == Game.current_system:
+		stop_auto()
+		return
+	if in_bay():
+		# out of the docking bay first
+		var st_lm := station_lm()
+		player.throttle = 1.0
+		_steer_to(st_lm.bay.out if not st_lm.is_empty() else player.forward(), get_process_delta_time())
+		return
+	if player.st.jump > 0.0:
+		var hop := _jump_hop(Game.route_target)
+		if hop >= 0:
+			if _jump_cd <= 0.0:
+				jump_drive(hop)
+			return
+	var path := Game.route_path()
+	if path.is_empty():
+		stop_auto("No route from here")
+		return
+	var next: int = path[0]
+	var loc := current_loc()
+	if loc.kind == "gate" and loc.gate_to == next:
+		for lm in landmarks:
+			if lm.kind == "gate":
+				select(lm)
+				order("use")
+				return
+	start_warp(Game.gate_index(Game.current_system, next))
+
+
+## The best jump drive hop toward `target`: straight there if it's in reach, else the system in reach that
+## gets closest to it (-1 if none gets any closer).
+func _jump_hop(target: int) -> int:
+	var here: Vector2 = current_sys().pos
+	var goal: Vector2 = Game.systems[target].pos
+	var reach: float = player.st.jump
+	if here.distance_to(goal) <= reach:
+		return target
+	var best := -1
+	var bd := here.distance_to(goal) - 1.0
+	for s in Game.systems:
+		if s.id != Game.current_system and here.distance_to(s.pos) <= reach and s.pos.distance_to(goal) < bd:
+			bd = s.pos.distance_to(goal)
+			best = s.id
+	return best
+
+
+## Can the jump drive reach system `id` from here?
+func can_jump_drive(id: int) -> bool:
+	return player.st.jump > 0.0 and id != Game.current_system and \
+		current_sys().pos.distance_to(Game.systems[id].pos) <= player.st.jump
+
+
+## Capital ships: straight to another system, no stargates. A long wind-up, then the jump; a while to recharge.
+func jump_drive(id: int) -> void:
+	close_maps()
+	if mode != "fly" or _bay_blocks() or not can_jump_drive(id):
+		return
+	if _jump_cd > 0.0:
+		Game.say("Jump drive recharging (%ds)." % ceili(_jump_cd), UI.MUTED)
+		return
+	var sys: Dictionary = Game.systems[id]
+	if sys.cat == Game.CAT_PURPLE and not auto_travel and not Game.sandbox:
+		ask("%s is a WILD system: pirates everywhere, and you lose your cargo if you're destroyed.\n\nJump anyway?" % sys.name, "Jump",
+			_jump_drive_go.bind(id))
+	else:
+		_jump_drive_go(id)
+
+
+func _jump_drive_go(id: int) -> void:
+	var sys: Dictionary = Game.systems[id]
+	var heading: Vector2 = sys.pos - current_sys().pos
+	_jump_cd = JUMP_DRIVE_COOLDOWN
+	Game.bump("jumpdrives")
+	Game.say("Jump drive spooling: %s." % sys.name, Color("c080ff"))
+	_travel_to("jumpdrive", sys.name, JUMP_DRIVE_CHARGE, JUMP_BASE + heading.length() * JUMP_PER_PX * 0.6,
+		enter_location.bind(id, _arrival_loc(id), _arrival_spot(heading)), Game.CAT_COLORS[sys.cat], heading)
+
+
+## Open a portable wormhole: straight to any system at all. Used up.
+func open_portal(id: int) -> void:
+	close_maps()
+	if mode != "fly" or Game.portals <= 0 or id == Game.current_system or _bay_blocks():
+		return
+	Game.portals -= 1
+	Game.bump("portals")
+	Game.changed.emit()
+	var sys: Dictionary = Game.systems[id]
+	var heading: Vector2 = sys.pos - current_sys().pos
+	Game.say("The portable wormhole tears open toward %s..." % sys.name, Color("e080ff"))
+	_travel_to("wormhole", sys.name, JUMP_CHARGE, WORMHOLE_TIME, enter_location.bind(id, _arrival_loc(id), _arrival_spot(heading)),
+		Color("d050ff"), heading)
+
+
+## Where you come out arriving in a system any way but its gates: at its station if it has one, else its first
+## planet.
+func _arrival_loc(id: int) -> int:
+	var sys: Dictionary = Game.systems[id]
+	var first := -1
+	for i in sys.locs.size():
+		if sys.locs[i].kind == "planet":
+			if sys.locs[i].station:
+				return i
+			if first < 0:
+				first = i
+	return maxi(first, 0)
+
+
+## Jettisoned cargo tumbles out of the back of the ship as loose chunks (which can't be picked up for a moment).
+func _on_jettison(ore: String, q: int, n: int) -> void:
+	if not mode in ["fly", "warp", "inventory", "fitting", "map"]:
+		return
+	var back: Vector3 = -player.forward()
+	var per := maxi(10, ceili(n / 40.0))
+	var left := n
+	while left > 0:
+		var a := mini(left, per)
+		left -= a
+		var off := Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1))
+		var c = spawn_chunk(ore, q, a, player.position + back * (player.radius + 4.0) + off * player.radius * 0.3,
+			player.vel + back * randf_range(8.0, 18.0) + off * 4.0)
+		c.pick_cd = 3.0
+
+## Sandbox: straight to any system through a short jump, arriving at its station or first planet.
 func admin_jump(id: int) -> void:
 	close_maps()
 	if mode != "fly" or id == Game.current_system:
 		return
 	var sys: Dictionary = Game.systems[id]
-	var loc_i := 0
-	for i in sys.locs.size():
-		if sys.locs[i].kind == "planet":
-			loc_i = i
-			break
 	var heading: Vector2 = sys.pos - current_sys().pos
-	_travel_to("jump", sys.name, 1.0, 4.0, enter_location.bind(id, loc_i, _arrival_spot(heading)), Game.CAT_COLORS[sys.cat], heading)
+	_travel_to("jump", sys.name, 1.0, 2.0, enter_location.bind(id, _arrival_loc(id), _arrival_spot(heading)), Game.CAT_COLORS[sys.cat],
+		heading)
 
 
-## Admin: a pirate wave, here and now.
-func call_pirates() -> void:
-	if mode == "fly":
+## Sandbox: pirates here and now - a wave of the usual mix, or `count` of one type.
+func call_pirates(type := "", count := 1) -> void:
+	if mode != "fly":
+		return
+	if type == "":
 		_spawn_pirates()
+		return
+	var base := randf() * TAU
+	for i in count:
+		var p := Pirate.new()
+		p.main = self
+		var a := base + randf_range(-0.8, 0.8)
+		var r: float = randf_range(160.0, 220.0) + player.radius
+		p.position = player.position + Vector3(cos(a) * r, randf_range(-30.0, 30.0), sin(a) * r)
+		world.add_child(p)
+		p.setup(type, current_sys().cat)
+
+
+## Sandbox: a fresh ore field right ahead of the ship (`ore` "" for the usual mix here).
+func spawn_field_here(ore := "") -> void:
+	if mode != "fly":
+		return
+	var at: Vector3 = player.position + player.forward() * 3500.0
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	_spawn_field(at, current_sys(), false, rng, ore)
+	_landmark("Sandbox Field", "ore", "ore", at)
 
 
 ## A warp across the location to the target: align, a short charge, then a few seconds at warp with the
@@ -1991,11 +2398,11 @@ func warp_local(t) -> void:
 	var dest := tp - to.normalized() * minf(stop, d * 0.5)
 	if t is Dictionary and t.has("bay"):
 		# a station: drop out in its approach lane, in front of the docking bay
-		dest = t.bay.mouth + t.bay.out * BAY_LANE
+		dest = t.bay.mouth + t.bay.out * (BAY_LANE + _big_clear())
 		to = dest - player.position
 		d = to.length()
 	cancel_autopilot()
-	_travel_to("local", target_info(t).name, 1.2, 2.5 + d / 3500.0, Callable(), Color(0.55, 0.8, 1.0), Vector2(to.x, to.z),
+	_travel_to("local", target_info(t).name, 1.0, 0.4 + d / LOCAL_WARP_SPEED, Callable(), Color(0.55, 0.8, 1.0), Vector2(to.x, to.z),
 		{"heading3": to.normalized(), "from": player.position, "to": dest})
 
 
@@ -2004,21 +2411,28 @@ func survey_scan() -> void:
 	if _scan_cd > 0.0:
 		Game.say("Survey scanner recharging (%ds)." % ceili(_scan_cd), UI.MUTED)
 		return
-	_scan_cd = SCAN_COOLDOWN
+	var k: float = player.st.scan
+	var reach: float = SCAN_RANGE * k + player.radius
+	_scan_cd = SCAN_COOLDOWN / k
 	Sfx.play("charge", -6.0, 1.8)
 	var n := 0
 	var ore := 0
+	var kinds := []
 	for a in get_tree().get_nodes_in_group("asteroids"):
 		var d: float = a.position.distance_to(player.position)
-		if d < SCAN_RANGE:
+		if d < reach:
 			a.scanned = true
-			a.ping(d / SCAN_RANGE * 1.5)  # the pulse reaches the far rocks last
+			a.ping(d / reach * 1.5)  # the pulse reaches the far rocks last
 			n += 1
 			ore += a.remaining
+			if not kinds.has(a.ore_id):
+				kinds.append(a.ore_id)
 	if n == 0:
-		Game.say("Survey scan: no asteroids within %s." % UI.dist(SCAN_RANGE), UI.MUTED)
+		Game.say("Survey scan: no asteroids within %s." % UI.dist(reach), UI.MUTED)
 	else:
-		Game.say("Survey scan: %d asteroids, %d ore in reach. Check the overview." % [n, ore], Color("8cd8ff"))
+		Game.note_loc(Game.current_system, Game.current_loc, kinds)  # the notebook remembers what's here
+		Game.say("Survey scan: %d asteroids, %d ore in reach (%s). Check the overview." % [n, ore,
+			", ".join(kinds.map(func(o): return Game.ORES[o].name))], Color("8cd8ff"))
 
 # ---------------------------------------------------------------- spawning helpers
 
@@ -2065,7 +2479,7 @@ func spawn_bullet(pos: Vector3, dir: Vector3, s: Dictionary, friendly: bool) -> 
 	b.look_at(pos + dir, Vector3.UP if absf(dir.y) < 0.99 else Vector3.RIGHT)
 
 
-func spawn_chunk(ore: String, q: int, amount: int, pos: Vector3, vel: Vector3) -> void:
+func spawn_chunk(ore: String, q: int, amount: int, pos: Vector3, vel: Vector3) -> Node3D:
 	var c := OreChunk.new()
 	c.main = self
 	c.ore_id = ore
@@ -2074,6 +2488,7 @@ func spawn_chunk(ore: String, q: int, amount: int, pos: Vector3, vel: Vector3) -
 	c.position = pos
 	c.vel = vel
 	world.add_child(c)
+	return c
 
 
 func sparks(pos: Vector3, color: Color, n: int) -> void:
@@ -2160,19 +2575,21 @@ func _update_travel(delta: float) -> void:
 					travel.rail_a = 2.0 * maxf(left, 60.0) / (travel.charge * travel.charge)
 					g.gate.launch(travel.charge)
 				player.vel = into * travel.rail_a * travel.t - _off_axis(g) * 4.0
-				_scroll_speed = 220.0 * k * k * k
+				_scroll_speed = WARP_SCROLL_MAX * 0.4 * k * k
 			else:
-				# the ship starts rolling forward and the world begins to slide past
-				player.vel = fwd * player.top_speed() * 0.5 * k
-				_scroll_speed = 220.0 * k * k * k
+				# the charge is the acceleration: the drive drags the ship forward harder and harder and the world
+				# starts to slide past - then, charged, it's at full warp at once (see "travel")
+				player.vel = fwd * player.top_speed() * CHARGE_SPEED * k * k
+				_scroll_speed = WARP_SCROLL_MAX * 0.4 * k * k
 			if travel.t >= travel.charge:
 				travel.phase = "travel"
 				travel.t = 0.0
 				if travel.kind == "local":
-					travel.from = player.position  # it crept forward while charging
+					travel.from = player.position  # it rolled forward while charging
 				else:
 					_rush = Vector3.ZERO
-					_rush_v = 400.0 if travel.has("gate") else 150.0
+					_rush_v = WARP_RUSH  # no build-up: the drive has charged, and you're gone
+				_scroll_speed = WARP_SCROLL_MAX
 				_flash(0.55)
 				Sfx.play("warp", -1.0)
 				var f := _fx(player.position)
@@ -2182,18 +2599,18 @@ func _update_travel(delta: float) -> void:
 				_fov_kick = 18.0
 		"travel":
 			if travel.kind == "local":
-				# across this location with the world still there, streaking past (and the planet swinging by)
+				# across this location at one steady, enormous speed, the world streaking past (and the planet
+				# swinging by)
 				var s := clampf(travel.t / travel.travel, 0.0, 1.0)
 				var before: Vector3 = player.position
-				player.position = (travel.from as Vector3).lerp(travel.to, s * s * (3.0 - 2.0 * s))
+				player.position = (travel.from as Vector3).lerp(travel.to, s)
 				player.vel = (player.position - before) / maxf(delta, 0.001) * 0.02
 				warp_scroll += player.position - before
 			else:
 				# everything here - stations, rocks, the planet - streams away behind you faster and faster
 				# until it's gone
 				player.vel = Vector3.ZERO
-				_scroll_speed = move_toward(_scroll_speed, WARP_SCROLL_MAX, 3000.0 * delta)
-				_rush_v = minf(_rush_v * exp(3.0 * delta), 600000.0)
+				_scroll_speed = WARP_SCROLL_MAX
 				_rush += travel.heading * _rush_v * delta
 				world.position = -_rush
 				world.visible = _rush.length() < 60000.0
@@ -2266,7 +2683,7 @@ func start_warp(loc_i: int) -> void:
 
 func try_gate(dest: int) -> void:
 	var d: Dictionary = Game.systems[dest]
-	if d.cat == Game.CAT_PURPLE:
+	if d.cat == Game.CAT_PURPLE and not auto_travel and not Game.sandbox:  # (auto-travel asked once, up front)
 		ask("!!  WARNING  !!\n\n%s is a WILD system.\nPirates hold roughly 60%% of its planets, and you lose your cargo if you're destroyed.\nAnomalies hide in Wild space, though...\n\nJump anyway?" % d.name,
 			"Jump", _gate_jump.bind(dest))
 	else:
@@ -2325,6 +2742,7 @@ func open_station(loc: Dictionary) -> void:
 	mode = "docked"
 	player.stop()
 	player.heal_full()
+	Game.home = [Game.current_system, Game.current_loc]
 	Sfx.play("dock", -4.0)
 	var key := "%d:%d" % [Game.current_system, Game.current_loc]
 	var got := Game.collect(key)
@@ -2353,6 +2771,8 @@ func close_panel() -> void:
 		var bay := _docked_bay
 		_docked_bay = {}
 		player.position = bay.pad + Vector3(0, 4, 0)
+		if player.st.capital:  # (tethered out in front of the station, not in the bay)
+			player.position = bay.mouth + bay.out * (BAY_LANE + _big_clear())
 		aim = Basis.looking_at(bay.out, Vector3.UP)
 		player.basis = aim
 		player.stop()
@@ -2426,10 +2846,16 @@ func player_died() -> void:
 	fitting.hide()
 	confirm.hide()
 	dock_screen.reset()
-	Game.cargo.clear()
+	cancel_autopilot()
+	stop_auto()
 	Game.event("death")
+	# out past the stations (Unsecure and Wild space) your cargo goes with the ship; nearer home it's recovered
+	if current_sys().cat >= Game.CAT_RED:
+		Game.cargo.clear()
+		Game.say("Your ship was destroyed! Your cargo is lost.", UI.BAD)
+	else:
+		Game.say("Your ship was destroyed! Salvage crews recovered your cargo.", UI.BAD)
 	Game.changed.emit()
-	Game.say("Your ship was destroyed! Your cargo is lost.", UI.BAD)
 	await get_tree().create_timer(3.0).timeout
 	_flash(1.0)
 	_respawn()
@@ -2439,6 +2865,7 @@ func _respawn() -> void:
 	player.set_dead(false)
 	player.heal_full()
 	mode = "fly"
-	enter_location(0, 0)
-	Game.say("Your ship was rebuilt at Core Station.", Color("9fd3ff"))
+	var home: Array = Game.home
+	enter_location(home[0], home[1])
+	Game.say("Your ship was rebuilt at %s." % current_loc().name, Color("9fd3ff"))
 	Game.save_game()

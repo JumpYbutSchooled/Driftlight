@@ -81,7 +81,7 @@ func _process(delta: float) -> void:
 	var to: Vector3 = p.position - position
 	var d := to.length()
 	var k := Game.WORLD_SCALE
-	var sight: float = data.sight * k * p.st.get("stealth", 1.0)
+	var sight: float = data.sight * k * p.st.get("stealth", 1.0) + p.radius  # (a capital ship's a big target)
 	if not p.alive or main.mode == "docked" or main.invulnerable():
 		aggro = false
 	elif d < sight:
@@ -95,11 +95,11 @@ func _process(delta: float) -> void:
 	if aggro:
 		var n := to / maxf(d, 0.1)
 		var tangent := n.cross(_orbit_axis).normalized() * _orbit
-		desired = n * (d - data.keep * k) * 1.5 + tangent * spd * 0.8
+		desired = n * (d - data.keep * k - p.radius) * 1.5 + tangent * spd * 0.8
 		face = to
 		guns.aim(delta, _lead(p), 0.8)
 		_fire_cd -= delta
-		if _fire_cd <= 0.0 and d < data.range * k and guns.on_target.has(true):
+		if _fire_cd <= 0.0 and d < data.range * k + p.radius and guns.on_target.has(true):
 			_fire(p)
 			_fire_cd = 1.0 / data.rate * randf_range(0.8, 1.3)
 	else:
@@ -180,5 +180,8 @@ func _die() -> void:
 	var bounty := int(data.credits * Game.CAT_DANGER[sys.cat])
 	Game.add_credits(bounty)
 	Game.say("%s destroyed!  +%d credits" % [data.name, bounty], Color("ffb36b"))
+	if type in ["sentinel", "captain"] and randf() < 0.03:
+		Game.portals += 1
+		Game.toast.emit("RARE FIND", "A portable wormhole drifted out of the wreckage!", "anomaly", Color("e080ff"))
 	Game.event("kill", {"type": type, "sys": sys.id})
 	queue_free()

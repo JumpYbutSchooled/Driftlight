@@ -247,3 +247,48 @@ static func dist(d: float) -> String:
 	if d < 100000.0:
 		return "%.1f km" % (d / 1000.0)
 	return "%d km" % roundi(d / 1000.0)
+
+## How visible a UI part is `t` seconds into the HUD coming back on: each part (its own `part_seed`) waits a
+## moment, stutters on and off like a screen powering up, then holds.
+static func flicker(t: float, part_seed: int) -> float:
+	var start := 0.04 + fposmod(part_seed * 0.1373, 0.32)
+	var k := (t - start) / 0.38
+	if k <= 0.0:
+		return 0.0
+	if k >= 1.0:
+		return 1.0
+	var h := fposmod(sin(floorf(t * 26.0) * 12.9898 + part_seed * 78.233) * 43758.5453, 1.0)
+	return clampf(0.35 + k * 0.65, 0.0, 1.0) if h < 0.3 + k * 0.65 else 0.08 * k
+
+
+## A menu opening: a quick fade up from slightly smaller (smoother than popping straight in).
+static func pop_in(c: Control) -> void:
+	c.pivot_offset = c.size / 2.0
+	c.modulate.a = 0.0
+	c.scale = Vector2.ONE * 0.985
+	var tw := c.create_tween().set_parallel().set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.tween_property(c, "modulate:a", 1.0, 0.16)
+	tw.tween_property(c, "scale", Vector2.ONE, 0.2)
+
+
+## A module's card: its kind's icon and colour, its name and what it does.
+static func module_card(id: String, title_text := "") -> Dictionary:
+	var m: Dictionary = Game.MODULES[id]
+	var col: Color = Game.module_color(id)
+	var kind: String = Game.MODULE_CATS[m.cat].name.to_upper()
+	return card(Game.module_icon(id), col, title_text if title_text != "" else m.name,
+		"[color=%s]%s[/color]   %s" % [hex(col), kind, m.desc], col.lerp(TEXT, 0.35))
+
+## The progression guide (title screen and the inventory's Guide tab): how to get on, without spoiling anything.
+const GUIDE := """[font_size=20][color=#ffe7a3][b]HOW TO PROGRESS[/b][/color][/font_size]
+
+[color=#9fd3ff]1. Mine and smelt.[/color]  Shoot ore veins (V surveys what's in them) and collect the chunks: fly into them, let your tractor beam pull them in, or press O. Dock at a station with a refinery, load your hold into the furnace and collect the materials when they're done - furnaces keep working while you're away.
+[color=#9fd3ff]2. Build, don't buy.[/color]  Everything is built from materials at a station's Fabricator. Markets sell the same things ready-made, but for a lot of credits. A Mining Laser is a great first build: its beam locks on and cuts ore straight into your hold.
+[color=#9fd3ff]3. Climb the ship ladder.[/color]  There are over fifty ships in ten tiers. Each tier costs more than the last and does something better - more cargo, more guns, more speed, better mining. Pick the ones that suit how you like to play; you don't need them all.
+[color=#9fd3ff]4. Mark up your gear.[/color]  Every weapon comes in five marks and every module in three. Each mark is built from the one below it, plus more materials.
+[color=#9fd3ff]5. Go where the ore is.[/color]  The galaxy is split into regions, and every region outside the Core has an ore of its own that's found nowhere else - always at least Normal quality. From tier 3 on, ships and the better marks of gear need them. The galaxy map shows the regions; the Guide planner tells you where each ore comes from.
+[color=#9fd3ff]6. Explore - it pays.[/color]  Charting a system you've never visited, scanning planets with probes and finding anomalies all earn credits, and far more the further out you go. Wild space is dangerous, but it's where the best things are.
+[color=#9fd3ff]7. Keep notes.[/color]  Your notebook (I) remembers every station, refinery, ore field and oddity you've seen. Pin a recipe to keep its materials on screen. Plot routes with stops on the galaxy map and press T to let the autopilot fly them.
+[color=#9fd3ff]8. Dying is a setback, not the end.[/color]  You're rebuilt at the last station you docked at. Near home your cargo is recovered; out in Unsecure and Wild space it's lost.
+
+[color=#8590a0]The biggest ships of all are too large for any docking bay and carry their own jump drives. What else is out there is for you to find.[/color]"""

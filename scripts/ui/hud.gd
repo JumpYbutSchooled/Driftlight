@@ -1,17 +1,26 @@
 extends Control
-## On-screen info, kept minimal and see-through: status readout, mission / cargo / furnace lists,
-## radar, messages, toasts, prompts and the warp readout. Text over the scene, hairline rules, no boxes.
+## On-screen info, kept minimal and see-through: status readout, mission / pinned recipe / cargo / furnace
+## lists, radar, messages, toasts, prompts and the warp readout. Text over the scene, hairline rules, no boxes.
+##
+## Each part is its own child canvas (PARTS), drawn by the matching function here through `_ci`, so the parts
+## can come back on one at a time: after a warp, undocking or a respawn each flickers on in its own way.
 
 const UI = preload("res://scripts/ui/ui.gd")
 const RADAR_RANGE := 3000.0  # metres
 const RADAR_R := 115.0
 const SWEEP_SPEED := 1.6  # radians per second
 const MARK := Color(0.95, 0.86, 0.6)  # landmarks (stations, gates, fields...)
+# part: flicker seed (each comes on differently)
+const PARTS := {"markers": 1, "crosshair": 2, "status": 3, "side": 4, "radar": 5, "route": 6, "msgs": 7, "toast": 0,
+	"title": 9, "warp": 0, "prompt": 10, "keys": 11, "hover": 12}
 
 var main
 var prompt := ""
 var hover_text := ""
 var font: Font
+var boot := 99.0  # seconds since the HUD started coming back on
+var _ci: CanvasItem  # the part being drawn
+var _parts := {}
 var _msgs := []
 var _toasts := []
 var _title := ""
@@ -27,8 +36,27 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	mouse_filter = MOUSE_FILTER_IGNORE
 	font = UI.body
+	_ci = self
 	Game.toast.connect(push_toast)
 	Game.saved.connect(func(): _saved_t = 2.0)
+	for p in PARTS:
+		var c := Control.new()
+		c.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
+		c.mouse_filter = MOUSE_FILTER_IGNORE
+		c.draw.connect(_draw_part.bind(p, c))
+		add_child(c)
+		_parts[p] = c
+
+
+## Bring the HUD back on, part by part.
+func flicker_in() -> void:
+	boot = 0.0
+	Sfx.play("beep", -20.0, 0.7)
+
+
+## How visible a part is right now (for the overview and target panel too).
+func part_alpha(part_seed: int) -> float:
+	return 1.0 if part_seed == 0 else UI.flicker(boot, part_seed)
 
 
 func push_message(text: String, color: Color) -> void:
@@ -58,99 +86,130 @@ func _process(delta: float) -> void:
 			_toasts.pop_front()
 	_title_t = maxf(0.0, _title_t - delta)
 	_saved_t = maxf(0.0, _saved_t - delta)
+	boot += delta
 	_update_radar(delta)
-	queue_redraw()
+	for p in _parts:
+		_parts[p].modulate.a = part_alpha(PARTS[p])
+		_parts[p].queue_redraw()
 
 
 # ---------------------------------------------------------------- drawing helpers
 
 func _text(pos: Vector2, text: String, font_size: int, color: Color, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0, f: Font = null) -> void:
 	var use := f if f else font
-	draw_string_outline(use, pos, text, align, width, font_size, 4, Color(0.0, 0.0, 0.0, color.a * 0.75))
-	draw_string(use, pos, text, align, width, font_size, color)
+	_ci.draw_string_outline(use, pos, text, align, width, font_size, 4, Color(0.0, 0.0, 0.0, color.a * 0.75))
+	_ci.draw_string(use, pos, text, align, width, font_size, color)
 
 
 ## A small spaced-out heading with a hairline under it.
 func _heading(pos: Vector2, text: String, color: Color, width: float) -> void:
 	_text(pos, text, 13, color, HORIZONTAL_ALIGNMENT_LEFT, -1, UI.title)
-	draw_line(pos + Vector2(0, 7), pos + Vector2(width, 7), Color(color, 0.25), 1.0)
+	_ci.draw_line(pos + Vector2(0, 7), pos + Vector2(width, 7), Color(color, 0.25), 1.0)
 
 
 ## A labelled hairline bar: label on the left, value on the right, the bar underneath.
 func _bar(pos: Vector2, w: float, frac: float, color: Color, label: String, value: String) -> void:
 	_text(pos, label, 14, UI.MUTED, HORIZONTAL_ALIGNMENT_LEFT, -1, UI.title)
 	_text(pos, value, 16, UI.TEXT, HORIZONTAL_ALIGNMENT_RIGHT, w)
-	draw_rect(Rect2(pos + Vector2(0, 7), Vector2(w, 3)), Color(1, 1, 1, 0.08))
-	draw_rect(Rect2(pos + Vector2(0, 7), Vector2(w * clampf(frac, 0.0, 1.0), 3)), Color(color, 0.9))
+	_ci.draw_rect(Rect2(pos + Vector2(0, 7), Vector2(w, 3)), Color(1, 1, 1, 0.08))
+	_ci.draw_rect(Rect2(pos + Vector2(0, 7), Vector2(w * clampf(frac, 0.0, 1.0), 3)), Color(color, 0.9))
 
 
-# ---------------------------------------------------------------- main draw
+# ---------------------------------------------------------------- the parts
 
-func _draw() -> void:
-	if main.mode == "title":
+func _draw_part(part: String, c: Control) -> void:
+	if main == null or main.mode == "title":
 		return
+	_ci = c
 	var vs := size
+	var flying: bool = main.mode == "fly" and main.player.alive
 	if main.mode == "warp":
 		# warping: everything else gets out of the way
-		_text(Vector2(0, vs.y - 120.0), "warping...", 17, Color(UI.TEXT, 0.32), HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
+		if part == "warp":
+			_text(Vector2(0, vs.y - 120.0), "warping...", 17, Color(UI.TEXT, 0.32), HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
+		elif part == "toast":
+			_draw_toast(vs)
 		return
 	var p = main.player
-	var st: Dictionary = p.st
-	if main.mode in ["fly", "warp"] and p.alive:
-		_draw_markers(vs)
-		if main.mode == "fly":
-			_draw_crosshair(vs)
-	if not main.debug:
-		_draw_status(p, st)
-		_draw_side_panels(vs, _status_bottom())
-		_draw_radar(Vector2(vs.x - RADAR_R - 40.0, vs.y - RADAR_R - 70.0))
+	if not main.mode in ["fly", "dead"] and not part in ["msgs", "toast"]:
+		return  # a menu is open: only the messages show through it
+	match part:
+		"markers":
+			if main.mode in ["fly", "warp"] and p.alive:
+				_draw_markers(vs)
+		"crosshair":
+			if flying:
+				_draw_crosshair(vs)
+		"status":
+			if not main.debug:
+				_draw_status(p, p.st)
+		"side":
+			if not main.debug:
+				_draw_side_panels(vs, _status_bottom())
+		"radar":
+			if not main.debug:
+				_draw_radar(Vector2(vs.x - RADAR_R - 40.0, vs.y - RADAR_R - 70.0))
+		"route":
+			_draw_route(vs)
+		"msgs":
+			var my := vs.y - 250.0
+			for m in _msgs:
+				var col: Color = m.c
+				col.a = clampf(m.life, 0.0, 1.0)
+				_text(Vector2(30, my), m.t, 18, col)
+				my += 25.0
+			if _saved_t > 0.0:
+				_text(Vector2(30, vs.y - 54), "game saved", 14, Color(UI.GOOD, clampf(_saved_t, 0.0, 1.0) * 0.8))
+		"toast":
+			_draw_toast(vs)
+		"title":
+			# big title when entering a system
+			if _title_t > 0.0 and not main.debug:
+				var a := clampf(_title_t, 0.0, 1.0)
+				_text(Vector2(0, vs.y * 0.3), _title, 46, Color(_title_color, a * 0.9), HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
+				_text(Vector2(0, vs.y * 0.3 + 38), _title_sub, 19, Color(UI.TEXT, a * 0.7), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+		"warp":
+			if not main.travel.is_empty():
+				_draw_travel(vs, main.travel)
+		"prompt":
+			if prompt != "":
+				_text(Vector2(0, vs.y - 150), prompt, 22, UI.GOLD, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+			if main.command:
+				_text(Vector2(0, vs.y - 44), "CURSOR FREE  -  click to select  -  C or ESC for mouse look", 14, Color(UI.GOLD, 0.85),
+					HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
+		"keys":
+			var keys := "W/S pitch   Q/E turn   A/D roll   R/F throttle   X brake   SHIFT boost   click fire   right-click select   1 approach   2 orbit   3 warp   5 cruise   G use   O collect   V scan   SPACE warp   T auto-travel   I inventory   L fitting   N/M maps   H guide"
+			_text(Vector2(0, vs.y - 20), keys, 14, Color(UI.MUTED, 0.75), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+		"hover":
+			if hover_text != "":
+				_text(Vector2(main.reticle.x - 400.0, main.reticle.y + 58.0), hover_text, 17, Color(UI.TEXT, 0.9),
+					HORIZONTAL_ALIGNMENT_CENTER, 800.0)
 
-	# route
+
+## Achievements, missions and discoveries: a line of text across the top of the screen for a few seconds.
+func _draw_toast(vs: Vector2) -> void:
+	if _toasts.is_empty():
+		return
+	var t: Dictionary = _toasts[0]
+	var a := clampf((5.0 - t.life) * 4.0, 0.0, 1.0) * clampf(t.life * 3.0, 0.0, 1.0)
+	var y := 150.0
+	_text(Vector2(0, y), t.title, 15, Color(t.c, a), HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
+	_ci.draw_line(Vector2(vs.x / 2.0 - 160.0, y + 10.0), Vector2(vs.x / 2.0 + 160.0, y + 10.0), Color(t.c, a * 0.35), 1.0)
+	_text(Vector2(0, y + 36), t.text, 20, Color(UI.TEXT, a), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+
+
+## The route along the top: where to, how many jumps, the next gate; and the autopilot / auto-travel state.
+func _draw_route(vs: Vector2) -> void:
 	var path := Game.route_path()
 	if not path.is_empty():
 		var dest: Dictionary = Game.systems[Game.route_target]
 		var nxt: Dictionary = Game.systems[path[0]]
-		_text(Vector2(0, 36), "ROUTE  %s  -  %d jumps  -  next gate %s" % [dest.name.to_upper(), path.size(), nxt.name], 15, UI.GOLD,
+		var more := "" if Game.route_stops.is_empty() else "  (+%d stop%s)" % [Game.route_stops.size(), "" if Game.route_stops.size() == 1 else "s"]
+		_text(Vector2(0, 36), "ROUTE  %s  -  %d jumps  -  next gate %s%s" % [dest.name.to_upper(), path.size(), nxt.name, more], 15, UI.GOLD,
 			HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
-
-	# messages
-	var my := vs.y - 250.0
-	for m in _msgs:
-		var c: Color = m.c
-		c.a = clampf(m.life, 0.0, 1.0)
-		_text(Vector2(30, my), m.t, 18, c)
-		my += 25.0
-
-	# toast (achievements, missions)
-	if not _toasts.is_empty():
-		var t: Dictionary = _toasts[0]
-		var a := clampf((5.0 - t.life) * 4.0, 0.0, 1.0) * clampf(t.life * 3.0, 0.0, 1.0)
-		var y := 150.0
-		_text(Vector2(0, y), t.title, 15, Color(t.c, a), HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
-		draw_line(Vector2(vs.x / 2.0 - 160.0, y + 10.0), Vector2(vs.x / 2.0 + 160.0, y + 10.0), Color(t.c, a * 0.35), 1.0)
-		_text(Vector2(0, y + 36), t.text, 20, Color(UI.TEXT, a), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-
-	# big title when entering a system
-	if _title_t > 0.0 and not main.debug:
-		var a := clampf(_title_t, 0.0, 1.0)
-		_text(Vector2(0, vs.y * 0.3), _title, 46, Color(_title_color, a * 0.9), HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
-		_text(Vector2(0, vs.y * 0.3 + 38), _title_sub, 19, Color(UI.TEXT, a * 0.7), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-
-	if not main.travel.is_empty():
-		_draw_travel(vs, main.travel)
-	if _saved_t > 0.0:
-		_text(Vector2(30, vs.y - 54), "game saved", 14, Color(UI.GOOD, clampf(_saved_t, 0.0, 1.0) * 0.8))
-
-	if prompt != "":
-		_text(Vector2(0, vs.y - 150), prompt, 22, UI.GOLD, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	var keys := "W/S pitch   Q/E turn   A/D roll   R/F throttle   X brake   SHIFT boost   mouse look   click fire   right-click select   1 approach   2 orbit   3 warp to   5 cruise   G use   O collect ore   V scan   SPACE warp   C cursor   wheel zoom   I cargo   L fitting   N/M maps   F1 photo"
-	_text(Vector2(0, vs.y - 20), keys, 14, Color(UI.MUTED, 0.75), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	if main.command:
-		_text(Vector2(0, vs.y - 44), "CURSOR FREE  -  click to select  -  C or ESC for mouse look", 14, Color(UI.GOLD, 0.85),
-			HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
-
-	if hover_text != "":
-		_text(Vector2(main.reticle.x - 400.0, main.reticle.y + 58.0), hover_text, 17, Color(UI.TEXT, 0.9), HORIZONTAL_ALIGNMENT_CENTER, 800.0)
+	if main.auto_travel and main.mode in ["fly", "warp"]:
+		_text(Vector2(0, 36 if path.is_empty() else 56), "AUTO-TRAVEL  -  T to stop", 14, Color("8cd8ff"), HORIZONTAL_ALIGNMENT_CENTER,
+			vs.x, UI.title)
 
 
 ## The crosshair in the middle of the screen (the turrets aim at whatever it's on), with a pip per turret
@@ -160,25 +219,34 @@ func _draw_crosshair(_vs: Vector2) -> void:
 	var c: Vector2 = main.reticle.round()
 	var hostile: bool = main.aim_target != null and is_instance_valid(main.aim_target) and main.aim_target.is_in_group("pirates")
 	var col := Color("ee6a5a") if hostile else Color(1, 1, 1, 0.85)
-	draw_circle(c, 1.6, col)
+	_ci.draw_circle(c, 1.6, col)
 	for d in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
-		draw_line(c + d * 8.0, c + d * 15.0, Color(col, 0.6), 1.5)
+		_ci.draw_line(c + d * 8.0, c + d * 15.0, Color(col, 0.6), 1.5)
 	var cam: Camera3D = main.camera
 	var p = main.player
+	if p.beam_lock != null and main.target_valid(p.beam_lock) and not cam.is_position_behind(p.beam_lock.global_position):
+		# the mining beams' lock: a turning diamond on what they're cutting
+		var lp := cam.unproject_position(p.beam_lock.global_position)
+		var r := 14.0
+		var a := Time.get_ticks_msec() / 400.0
+		var pts := PackedVector2Array()
+		for k in 5:
+			pts.append(lp + Vector2.from_angle(a + k * PI / 2.0) * r)
+		_ci.draw_polyline(pts, Color("66ffcc"), 1.5, true)
 	var guns: Array = p.guns_ready
 	if not guns.is_empty():
 		var clear := 0
 		for i in guns.size():
 			var gx := c.x + (i - (guns.size() - 1) / 2.0) * 7.0
-			draw_circle(Vector2(gx, c.y + 24.0), 2.2, Color(0.75, 1.0, 0.85, 0.85) if guns[i] else Color(0.93, 0.4, 0.35, 0.45))
+			_ci.draw_circle(Vector2(gx, c.y + 24.0), 2.2, Color(0.75, 1.0, 0.85, 0.85) if guns[i] else Color(0.93, 0.4, 0.35, 0.45))
 			clear += 1 if guns[i] else 0
 		if clear == 0 and Input.is_action_pressed("fire"):
 			_text(Vector2(c.x - 150.0, c.y + 44.0), "no turret can bear", 13, Color(0.93, 0.48, 0.42, 0.8), HORIZONTAL_ALIGNMENT_CENTER, 300.0)
-	var nose: Vector3 = p.position + p.forward() * 300.0
+	var nose: Vector3 = p.position + p.forward() * (300.0 + p.radius * 4.0)
 	if not cam.is_position_behind(nose):
 		var n := cam.unproject_position(nose).round()
 		if n.distance_to(c) > 6.0:
-			draw_arc(n, 5.0, 0.0, TAU, 16, Color(0.6, 0.9, 1.0, 0.6), 1.5, true)
+			_ci.draw_arc(n, 5.0, 0.0, TAU, 16, Color(0.6, 0.9, 1.0, 0.6), 1.5, true)
 
 
 ## Markers on the notable things here (and arrows at the screen edge when they're off-screen), plus red
@@ -194,7 +262,7 @@ func _draw_markers(vs: Vector2) -> void:
 	_draw_chunk_tags(cam, pp)
 	for pir in get_tree().get_nodes_in_group("pirates"):
 		var d: float = pp.distance_to(pir.position)
-		if d > 500.0 or cam.is_position_behind(pir.position):
+		if d > 500.0 + main.player.radius * 2.0 or cam.is_position_behind(pir.position):
 			continue
 		var sp := cam.unproject_position(pir.position)
 		var half := clampf(pir.radius / maxf(d, 1.0) * vs.y * 0.9, 10.0, 90.0)
@@ -202,12 +270,12 @@ func _draw_markers(vs: Vector2) -> void:
 		for sx in [-1, 1]:
 			for sy in [-1, 1]:
 				var corner := sp + Vector2(sx, sy) * half
-				draw_line(corner, corner - Vector2(sx * half * 0.35, 0), c, 1.5)
-				draw_line(corner, corner - Vector2(0, sy * half * 0.35), c, 1.5)
+				_ci.draw_line(corner, corner - Vector2(sx * half * 0.35, 0), c, 1.5)
+				_ci.draw_line(corner, corner - Vector2(0, sy * half * 0.35), c, 1.5)
 		if pir.hp < pir.max_hp:
 			var w := half * 2.0
-			draw_rect(Rect2(sp.x - w / 2.0, sp.y - half - 10.0, w, 3), Color(1, 1, 1, 0.12))
-			draw_rect(Rect2(sp.x - w / 2.0, sp.y - half - 10.0, w * pir.hp / pir.max_hp, 3),
+			_ci.draw_rect(Rect2(sp.x - w / 2.0, sp.y - half - 10.0, w, 3), Color(1, 1, 1, 0.12))
+			_ci.draw_rect(Rect2(sp.x - w / 2.0, sp.y - half - 10.0, w * pir.hp / pir.max_hp, 3),
 				Color("b080ee") if pir.type == "sentinel" else Color("ee5a4a"))
 
 
@@ -219,7 +287,7 @@ func _marker(vs: Vector2, cam: Camera3D, pos: Vector3, label: String, icon: Stri
 	var on_screen := not behind and sp.x > margin and sp.x < vs.x - margin and sp.y > margin and sp.y < vs.y - margin
 	var text := "%s  %s" % [label, UI.dist(dist)]
 	if on_screen:
-		UI.glyph(self, icon, sp, 7.0, Color(color, 0.9))
+		UI.glyph(_ci, icon, sp, 7.0, Color(color, 0.9))
 		_text(sp + Vector2(-150, 26), text, 15, Color(color, 0.85), HORIZONTAL_ALIGNMENT_CENTER, 300)
 	else:
 		var dir := sp - centre
@@ -231,7 +299,7 @@ func _marker(vs: Vector2, cam: Camera3D, pos: Vector3, label: String, icon: Stri
 		var edge := centre + dir * minf((vs.x / 2.0 - margin) / maxf(absf(dir.x), 0.001), (vs.y / 2.0 - margin) / maxf(absf(dir.y), 0.001))
 		var tip := edge + dir * 12.0
 		var side := dir.orthogonal() * 6.0
-		draw_polyline(PackedVector2Array([edge - side, tip, edge + side]), Color(color, 0.8), 1.5, true)
+		_ci.draw_polyline(PackedVector2Array([edge - side, tip, edge + side]), Color(color, 0.8), 1.5, true)
 		_text(edge - dir * 20.0 + Vector2(-150, 5), text, 14, Color(color, 0.7), HORIZONTAL_ALIGNMENT_CENTER, 300)
 
 
@@ -255,8 +323,8 @@ func _draw_selection(vs: Vector2, cam: Camera3D, pp: Vector3) -> void:
 	for sx in [-1, 1]:
 		for sy in [-1, 1]:
 			var corner := sp + Vector2(sx, sy) * half
-			draw_line(corner, corner - Vector2(sx * minf(half * 0.4, 16.0), 0), c, 1.5)
-			draw_line(corner, corner - Vector2(0, sy * minf(half * 0.4, 16.0)), c, 1.5)
+			_ci.draw_line(corner, corner - Vector2(sx * minf(half * 0.4, 16.0), 0), c, 1.5)
+			_ci.draw_line(corner, corner - Vector2(0, sy * minf(half * 0.4, 16.0)), c, 1.5)
 	if not t is Dictionary:
 		_text(sp + Vector2(-200, half + 20), "%s  %s" % [main.target_info(t).name, UI.dist(pp.distance_to(pos))], 15, c,
 			HORIZONTAL_ALIGNMENT_CENTER, 400)
@@ -265,6 +333,8 @@ func _draw_selection(vs: Vector2, cam: Camera3D, pp: Vector3) -> void:
 ## Near a station or stargate, corner brackets round the mouth of its docking bay or barrel (and its
 ## distance), so it's easy to line up on. Fly in to dock, or to be fired down the gate.
 func _draw_bay(cam: Camera3D, pp: Vector3) -> void:
+	if main.player.st.get("capital", false):
+		return  # (too big to fly in: capital ships dock by tether)
 	for lm in main.landmarks:
 		if lm.has("bay"):
 			_bay_brackets(cam, pp, lm)
@@ -287,8 +357,8 @@ func _bay_brackets(cam: Camera3D, pp: Vector3, lm: Dictionary) -> void:
 	for i in 4:
 		var a: Vector2 = pts[i]
 		var b: Vector2 = pts[(i + 1) % 4]
-		draw_line(a, a.lerp(b, 0.2), col, 1.5)
-		draw_line(b, b.lerp(a, 0.2), col, 1.5)
+		_ci.draw_line(a, a.lerp(b, 0.2), col, 1.5)
+		_ci.draw_line(b, b.lerp(a, 0.2), col, 1.5)
 	var e1: Vector2 = (pts[0] + pts[1]) / 2.0
 	var e2: Vector2 = (pts[2] + pts[3]) / 2.0
 	var top: Vector2 = e1 if e1.y < e2.y else e2  # label the upper edge
@@ -306,23 +376,24 @@ func _draw_self(_vs: Vector2, cam: Camera3D) -> void:
 		return
 	var sp := cam.unproject_position(p.position)
 	var c := Color(0.6, 0.92, 1.0, clampf((main.zoom - 6.0) / 6.0, 0.0, 0.85))
-	draw_arc(sp, 10.0, 0.0, TAU, 24, c, 1.5, true)
+	_ci.draw_arc(sp, 10.0, 0.0, TAU, 24, c, 1.5, true)
 	var f: Vector3 = p.position + p.forward() * p.radius * 30.0
 	if not cam.is_position_behind(f):
 		var tip := cam.unproject_position(f)
-		draw_line(sp + (tip - sp).limit_length(10.0), sp + (tip - sp).limit_length(24.0), c, 1.5)
+		_ci.draw_line(sp + (tip - sp).limit_length(10.0), sp + (tip - sp).limit_length(24.0), c, 1.5)
 	_text(sp + Vector2(-100, 28), "you", 13, c, HORIZONTAL_ALIGNMENT_CENTER, 200)
 
 
 ## Small rings on loose ore chunks near you, so they're easy to find against a huge rock.
 func _draw_chunk_tags(cam: Camera3D, pp: Vector3) -> void:
+	var reach: float = 900.0 + main.player.radius * 3.0
 	for n in get_tree().get_nodes_in_group("chunks"):
 		var d: float = pp.distance_to(n.position)
-		if d > 900.0 or cam.is_position_behind(n.position):
+		if d > reach or cam.is_position_behind(n.position):
 			continue
 		var sp := cam.unproject_position(n.position)
 		var col: Color = Game.ORES[n.ore_id].color.lightened(0.3)
-		draw_arc(sp, 6.0, 0.0, TAU, 12, Color(col, 0.7), 1.5, true)
+		_ci.draw_arc(sp, 6.0, 0.0, TAU, 12, Color(col, 0.7 if not n.tractored else 1.0), 1.5 if not n.tractored else 2.0, true)
 
 
 ## The warp readout, low on the screen: what's happening, where to, and a thin progress line.
@@ -333,7 +404,7 @@ func _draw_travel(vs: Vector2, trip: Dictionary) -> void:
 	var charging: bool = trip.phase == "charge" or aligning
 	var total: float = trip.charge if charging else trip.travel
 	var frac := clampf(trip.t / total, 0.0, 1.0)
-	var word := "WARP" if trip.kind in ["warp", "local"] else ("WORMHOLE" if trip.kind == "wormhole" else "JUMP")
+	var word: String = {"warp": "WARP", "local": "WARP", "wormhole": "WORMHOLE", "jumpdrive": "JUMP"}.get(trip.kind, "JUMP")
 	var head := ("CHARGING %s DRIVE" % word) if charging else ("IN %s" % word if trip.kind != "jump" else "JUMPING")
 	if trip.kind == "local" and not charging:
 		head = "WARPING"
@@ -347,8 +418,8 @@ func _draw_travel(vs: Vector2, trip: Dictionary) -> void:
 	_text(Vector2(x, y), head, 14, col, HORIZONTAL_ALIGNMENT_LEFT, -1, UI.title)
 	_text(Vector2(x, y), "--" if aligning else "%.1fs" % maxf(0.0, total - trip.t), 16, UI.TEXT, HORIZONTAL_ALIGNMENT_RIGHT, w)
 	_text(Vector2(0, y + 26), trip.dest, 20, UI.TEXT, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	draw_rect(Rect2(x, y + 38, w, 2), Color(1, 1, 1, 0.1))
-	draw_rect(Rect2(x, y + 38, w * frac, 2), col)
+	_ci.draw_rect(Rect2(x, y + 38, w, 2), Color(1, 1, 1, 0.1))
+	_ci.draw_rect(Rect2(x, y + 38, w * frac, 2), col)
 	if charging:
 		_text(Vector2(0, y + 60), "ESC or X to cancel", 14, Color(UI.MUTED, 0.8), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 
@@ -357,34 +428,48 @@ func _draw_status(p, st: Dictionary) -> void:
 	var sys: Dictionary = Game.systems[Game.current_system]
 	var loc: Dictionary = sys.locs[Game.current_loc]
 	var cc: Color = Game.CAT_COLORS[sys.cat].lerp(UI.TEXT, 0.2)
+	var reg: Dictionary = Game.REGIONS[sys.region]
 	var x := 30.0
 	var w := 340.0
 	_text(Vector2(x, 44), sys.name.to_upper(), 21, cc, HORIZONTAL_ALIGNMENT_LEFT, -1, UI.title)
+	_text(Vector2(x, 44), reg.name, 15, Color(reg.color, 0.85), HORIZONTAL_ALIGNMENT_RIGHT, w)
 	_text(Vector2(x, 68), "%s system  -  %s" % [Game.CAT_NAMES[sys.cat], loc.name], 16, UI.MUTED)
 	_bar(Vector2(x, 102), w, p.shield / maxf(st.shield, 1.0), Color("5fc8ee"), "SHIELD", "%d / %d" % [ceili(p.shield), st.shield])
 	_bar(Vector2(x, 132), w, p.hull / maxf(st.hull, 1.0), Color("e8845a"), "HULL", "%d / %d" % [ceili(p.hull), st.hull])
 	_bar(Vector2(x, 162), w, p.energy / maxf(st.energy, 1.0), Color("a890e0"), "BOOST",
 		("%d  >>>" if p.boosting else "%d") % roundi(p.energy))
 	var rev: bool = p.throttle < 0.0
-	_bar(Vector2(x, 192), w, absf(p.throttle), Color("e89a5a") if rev else Color("e8c66a"), "REVERSE" if rev else "THROTTLE",
-		"%d%%   %d m/s" % [roundi(absf(p.throttle) * 100.0), roundi(p.vel.length())])
+	if not main.autopilot.is_empty():
+		_bar(Vector2(x, 192), w, main.ap_power, Color("8cd8ff"), "AUTOPILOT  R/F", "power %d%%   %d m/s" % [roundi(main.ap_power * 100.0),
+			roundi(p.vel.length())])
+	else:
+		_bar(Vector2(x, 192), w, absf(p.throttle), Color("e89a5a") if rev else Color("e8c66a"), "REVERSE" if rev else "THROTTLE",
+			"%d%%   %d m/s" % [roundi(absf(p.throttle) * 100.0), roundi(p.vel.length())])
 	var full: bool = Game.cargo_used() >= st.cargo
 	var y := 226.0
 	_text(Vector2(x, y), "%d cr" % Game.credits, 17, UI.GOLD)
 	_text(Vector2(x + 96, y), "cargo %d / %d" % [Game.cargo_used(), st.cargo], 17, UI.BAD if full else UI.TEXT)
-	_text(Vector2(x + 226, y), "probes %d" % Game.probes, 17, UI.TEXT)
-	_text(Vector2(x, y), Game.SHIPS[Game.ship_id].name, 17, UI.MUTED, HORIZONTAL_ALIGNMENT_RIGHT, w)
+	var extra := "probes %d" % Game.probes
+	if Game.portals > 0:
+		extra += "   portals %d" % Game.portals
+	_text(Vector2(x + 236, y), extra, 15, UI.TEXT)
 	var by := 256.0
+	if st.get("jump", 0.0) > 0.0:
+		var cd: float = main._jump_cd
+		_text(Vector2(x, by - 4), "JUMP DRIVE  %s" % ("ready  -  double-click a system on the map (M)" if cd <= 0.0 else "recharging %ds" % ceili(cd)),
+			13, Color("c080ff"), HORIZONTAL_ALIGNMENT_LEFT, -1, UI.title)
+		by += 20.0
 	for b in Game.blessings:
 		_text(Vector2(x, by), "Blessing of %s  %ds" % [b.capitalize(), ceili(Game.blessings[b])], 16, Color("d090ee"))
 		by += 22.0
 
 
-## Missions, cargo and furnaces, down the left side under the status readout (the overview has the right).
+## Missions, pinned recipes, cargo and furnaces, down the left side under the status readout (the overview has
+## the right).
 func _draw_side_panels(vs: Vector2, top: float) -> void:
 	var x := 30.0
 	var w := 340.0
-	var y := top + 24.0
+	var y := top + 24.0 + (20.0 if main.player.st.get("jump", 0.0) > 0.0 else 0.0)
 	var limit := vs.y - 280.0
 	if not Game.missions.is_empty():
 		_heading(Vector2(x, y), "MISSIONS", UI.GOOD, w)
@@ -399,6 +484,29 @@ func _draw_side_panels(vs: Vector2, top: float) -> void:
 			_text(Vector2(x, y + 19), prog, 14, UI.MUTED)
 			y += 44.0
 		y += 12.0
+	if not Game.pinned.is_empty() and y + 60.0 < limit:
+		_heading(Vector2(x, y), "PINNED", Color("8cd8ff"), w)
+		y += 28.0
+		for pin in Game.pinned:
+			var cost := Game.build_cost(pin[0], pin[1])
+			var ready := Game.can_afford(cost)
+			_text(Vector2(x, y), Game.pin_name(pin), 16, UI.GOOD if ready else UI.TEXT, HORIZONTAL_ALIGNMENT_LEFT, w)
+			if ready:
+				_text(Vector2(x, y), "ready to build", 13, UI.GOOD, HORIZONTAL_ALIGNMENT_RIGHT, w)
+			y += 19.0
+			var cx := x
+			for k in cost:
+				var have: int = Game.have(k)
+				var part := "%s %d/%d" % [Game.item_name(k), mini(have, cost[k]), cost[k]]
+				var pw := font.get_string_size(part, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 12.0
+				if cx + pw > x + w:
+					cx = x
+					y += 17.0
+				_text(Vector2(cx, y), part, 13, (Game.item_color(k) if have >= cost[k] else Color(Game.item_color(k), 0.55)).lerp(
+					UI.GOOD if have >= cost[k] else UI.BAD, 0.35))
+				cx += pw
+			y += 24.0
+		y += 6.0
 	if not Game.cargo.is_empty() and y + 60.0 < limit:
 		var keys := Game.cargo.keys()
 		keys.sort()
@@ -440,8 +548,8 @@ func _draw_side_panels(vs: Vector2, top: float) -> void:
 					left += item[2]
 				var cur: Array = r.queue[0]
 				var frac: float = r.progress / Game.refine_time(cur[0], cur[1])
-				draw_rect(Rect2(x, y + 12, 140, 2), Color(1, 1, 1, 0.1))
-				draw_rect(Rect2(x, y + 12, 140 * frac, 2), Color("e8a060"))
+				_ci.draw_rect(Rect2(x, y + 12, 140, 2), Color(1, 1, 1, 0.1))
+				_ci.draw_rect(Rect2(x, y + 12, 140 * frac, 2), Color("e8a060"))
 				_text(Vector2(x + 152, y + 19), "%d left  %s" % [left, _clock(Game.refinery_seconds_left(r))], 14, UI.MUTED)
 			y += 44.0
 
@@ -466,13 +574,13 @@ func _update_radar(delta: float) -> void:
 	var p = main.player
 	var inv: Basis = p.global_transform.basis.inverse()
 	var pp: Vector3 = p.position
-	var k := RADAR_R / RADAR_RANGE
+	var k: float = RADAR_R / (RADAR_RANGE + p.radius * 4.0)
 	var seen := {}
 	var contacts := []
 	for i in main.landmarks.size():
 		contacts.append(["lm%d" % i, main.landmarks[i].pos, MARK, 5.0, main.landmarks[i].icon])
 	for group in ["npcs", "asteroids", "chunks", "crates", "pirates"]:
-		for n in get_tree().get_nodes_in_group(group):
+		for n in main.group(group):
 			if not n.visible:
 				continue
 			var col: Color = {"npcs": Color("9fc8e8"), "chunks": Color("eee0a0"), "crates": Color("c4a060"),
@@ -500,13 +608,13 @@ func _update_radar(delta: float) -> void:
 
 
 func _draw_radar(c: Vector2) -> void:
-	draw_circle(c, RADAR_R, Color(0.0, 0.01, 0.015, 0.35))
+	_ci.draw_circle(c, RADAR_R, Color(0.0, 0.01, 0.015, 0.35))
 	for r in [RADAR_R, RADAR_R * 0.66, RADAR_R * 0.33]:
-		draw_arc(c, r, 0.0, TAU, 64, Color(0.7, 0.85, 1.0, 0.12 if r < RADAR_R else 0.22), 1.0, true)
+		_ci.draw_arc(c, r, 0.0, TAU, 64, Color(0.7, 0.85, 1.0, 0.12 if r < RADAR_R else 0.22), 1.0, true)
 	# the sweep, with a fading trail behind it
 	for i in 14:
 		var a := _sweep - i * 0.035
-		draw_line(c, c + Vector2.from_angle(a) * RADAR_R, Color(0.6, 0.9, 1.0, 0.3 * (1.0 - i / 14.0)), 1.5, true)
+		_ci.draw_line(c, c + Vector2.from_angle(a) * RADAR_R, Color(0.6, 0.9, 1.0, 0.3 * (1.0 - i / 14.0)), 1.5, true)
 	var period := TAU / SWEEP_SPEED
 	for key in _marks:
 		var m: Dictionary = _marks[key]
@@ -520,7 +628,8 @@ func _draw_radar(c: Vector2) -> void:
 		var col := Color(m.color, fade)
 		var pos := c + off
 		if landmark or m.kind == "pirate":
-			UI.glyph(self, m.kind if m.kind != "" else "ore", pos, m.size, col)
+			UI.glyph(_ci, m.kind if m.kind != "" else "ore", pos, m.size, col)
 		else:
-			draw_circle(pos, m.size * 0.5, col)
-	_text(c + Vector2(-RADAR_R, RADAR_R + 22.0), UI.dist(RADAR_RANGE), 13, Color(UI.MUTED, 0.7), HORIZONTAL_ALIGNMENT_CENTER, RADAR_R * 2.0)
+			_ci.draw_circle(pos, m.size * 0.5, col)
+	_text(c + Vector2(-RADAR_R, RADAR_R + 22.0), UI.dist(RADAR_RANGE + main.player.radius * 4.0), 13, Color(UI.MUTED, 0.7),
+		HORIZONTAL_ALIGNMENT_CENTER, RADAR_R * 2.0)

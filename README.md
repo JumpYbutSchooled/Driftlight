@@ -1,8 +1,9 @@
 # Driftlight
 
-A dark, dusty space exploration game: fly a boxy little mining ship through a galaxy of 1,000 systems,
-mine huge ore veins, refine ore in station furnaces, build and buy bigger ships, and survive the pirates
-of Wild space. Made with Godot 4.7, with every ship, station and prop modelled in Blender from scripts.
+A dark, dusty space exploration game: fly a boxy little mining ship through a galaxy of 1,000 systems in ten
+regions, mine huge ore veins, refine ore in station furnaces, climb a ladder of 54 ships from a skiff to
+kilometre-long capital ships, and survive the pirates of Wild space. Made with Godot 4.7, with every ship,
+turret, station and prop modelled in Blender from scripts.
 
 ## Download and play (Windows)
 
@@ -12,7 +13,38 @@ of Wild space. Made with Godot 4.7, with every ship, station and prop modelled i
 
 The game **updates itself**: when you start it, it checks for a newer release, downloads it in the
 background, and installs it when you close the game (or straight away with *Restart to update* on the
-title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and are kept across updates.
+title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight`.
+
+**Version 4 started everyone over.** Saves from earlier versions are set aside (renamed `..._before_v4.json`,
+never deleted) and you begin again in a Wren.
+
+## How to progress
+
+No spoilers - just the shape of it. (The same guide is in the game: press H.)
+
+1. **Mine and smelt.** Shoot ore veins (V surveys what's in them) and collect the chunks: fly into them, let
+   your tractor beam pull them in, or press O. Dock at a station with a refinery, load your hold into the
+   furnace and collect the materials when they're done - furnaces keep working while you're away.
+2. **Build, don't buy.** Everything is built from materials at a station's Fabricator. Markets sell the same
+   things ready-made, but for a lot of credits. A Mining Laser is a great first build: its beam locks on and
+   cuts ore straight into your hold.
+3. **Climb the ship ladder.** There are 54 ships in ten tiers. Each tier costs more than the last and does
+   something better - more cargo, more guns, more speed, better mining. Pick the ones that suit you.
+4. **Mark up your gear.** Every weapon comes in five marks and every module in three, each built from the
+   mark below it. Modules are colour-coded by what they do.
+5. **Go where the ore is.** Every region outside the Core has an ore of its own, found nowhere else and never
+   below Normal quality. From tier 3 on, ships and the better marks of gear need them. The galaxy map shows
+   the regions; the in-game planner tells you where each ore comes from.
+6. **Explore - it pays.** Charting new systems, scanning planets and finding anomalies all earn credits, far
+   more the further out you go. Wild space is dangerous, but it's where the best things are.
+7. **Keep notes.** The notebook remembers every station, refinery, ore field and oddity you've seen. Pin a
+   recipe to keep its materials on screen. Plot a route with stops on the galaxy map and press T to let the
+   autopilot fly it.
+8. **Dying is a setback, not the end.** You're rebuilt at the last station you docked at. Near home your cargo
+   is recovered; out in Unsecure and Wild space it's lost.
+
+The **Sandbox** (pick it on the title screen) is a separate save where everything is free, with god mode,
+peaceful space and spawning tools (F8) - for anyone who just wants to fly the big ships.
 
 ## Controls
 
@@ -20,31 +52,33 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 |---|---|
 | W / S | pitch the nose up / down |
 | Q / E | turn |
-| R / F | throttle up / down (it stays where you leave it) |
 | A / D | roll |
-| X | brake, SHIFT boost |
-| Mouse | swing the camera round the ship (it doesn't steer) |
-| Click | fire: the gun turrets swivel to whatever the crosshair is on and fire once they're on it |
+| R / F | throttle up / down (on autopilot: how hard the autopilot pushes) |
+| X | brake (and stop the autopilot), SHIFT boost |
+| Mouse | swing the camera freely round the ship (it doesn't steer) |
+| Click | fire: the turrets swivel to whatever the crosshair is on; mining beams lock on to it |
 | Right-click | select whatever is under the crosshair |
 | C (or hold ALT) | free the cursor to click rows on the Overview and things in space |
 | 1 / 2 / 3 | approach / orbit / warp to the selected thing |
 | 5 | cruise: a fast run to the selected thing, weaving round the asteroids |
-| G | salvage, use; near a station or stargate, the autopilot flies you into it |
-| O | auto-collect: the autopilot flies you from one loose chunk of ore to the next |
+| G | salvage, use, decode; near a station or stargate, the autopilot flies you into it |
+| T | auto-travel: fly the plotted route on its own, warps and stargates and all |
+| O | auto-collect: the autopilot flies you round the loose ore |
 | L | ship fitting: choose the weapon on each turret |
 | V | survey scan: see what's in the asteroids around you |
 | SPACE (hold) | quick warp menu |
-| M / N | galaxy map / system map |
-| I | inventory |
+| M / N | galaxy map (click: route, shift-click: add a stop, double-click: jump drive / portable wormhole) / system map |
+| I / H | inventory (cargo, ship, notebook, guide, stats) / the guide |
 | Wheel / middle-click | zoom / put the camera back behind the ship |
 | F1 | photo mode (P saves a picture) |
-| F3 | debug screen, F11 fullscreen, ESC menu |
+| F3 | debug screen, F8 sandbox tools, F11 fullscreen, ESC menu |
 
 Ships are heavy: speed builds up and bleeds off over a few seconds, and turns carry momentum.
 To **dock**, fly into a station's docking bay and on to the landing pad at the back (warping to a
 station drops you out in front of the bay, lined up on it). **Stargates** are railguns pointed at
 the system they lead to: fly into the mouth and the coils fire you down the barrel into the jump.
-Near a station or gate, G hands it to the autopilot.
+Near a station or gate, G hands it to the autopilot. Capital ships are too big for any bay: they dock by
+tether, and their jump drives skip the stargates altogether.
 
 ## Building it yourself
 

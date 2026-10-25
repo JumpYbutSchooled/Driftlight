@@ -53,13 +53,29 @@ func _scene(path: String) -> PackedScene:
 	return _scenes[path]
 
 
-## A ship model (player ship or pirate) with its animations playing.
+## A ship model (player ship or pirate) with its animations playing. Capital ships are built small and
+## shown at their meta "scale" (their plating keeps its size; windows stay a real size).
 func ship(id: String) -> Node3D:
 	var folder := "ships" if Game.SHIPS.has(id) else "enemies"
 	var n: Node3D = _scene("res://models/%s/%s.glb" % [folder, id]).instantiate()
 	play_anims(n)
-	_detail(n)
+	var k := scale_of(id)
+	n.scale = Vector3.ONE * k
+	_detail(n, k)
 	return n
+
+
+## How many times bigger than its model a ship is shown (capital ships).
+func scale_of(id: String) -> float:
+	return float(meta.get(id, {}).get("scale", 1.0))
+
+
+## The turret for a weapon (its base id): turret_<weapon>.glb, or the Blaster's plain turret.
+func turret(kind: String) -> Node3D:
+	var file := "turret_" + kind
+	if kind == "" or kind == "twin_blasters" or not ResourceLoader.exists("res://models/props/%s.glb" % file):
+		file = "turret"
+	return prop(file)
 
 
 func prop(prop_name: String) -> Node3D:
@@ -67,7 +83,7 @@ func prop(prop_name: String) -> Node3D:
 	play_anims(n)
 	var k: float = PROP_SCALE.get(prop_name, 1.0)
 	n.scale = Vector3.ONE * k
-	_detail(n, k, PROP_PANEL.get(prop_name, 1.6 * k), 1.0 if prop_name == "turret" else 0.45)
+	_detail(n, k, PROP_PANEL.get(prop_name, 1.6 * k), 1.0 if prop_name.begins_with("turret") else 0.45)
 	return n
 
 
@@ -170,13 +186,13 @@ func play_anims(node: Node) -> void:
 ## Hull box of a ship in Godot axes (width, height, length), for the can't-shoot-through-your-hull check.
 func hull(id: String) -> Vector3:
 	var h: Array = meta.get(id, {}).get("hull", [5, 6, 1.6])
-	return Vector3(h[0], h[2], h[1])
+	return Vector3(h[0], h[2], h[1]) * scale_of(id)
 
 
 ## Overall size of a ship in Godot axes (width, height, length).
 func size(id: String) -> Vector3:
 	var s: Array = meta.get(id, {}).get("size", [6, 7, 2])
-	return Vector3(s[0], s[2], s[1])
+	return Vector3(s[0], s[2], s[1]) * scale_of(id)
 
 
 ## Additive, camera-facing glow (engines, bolts, lights). Cached per colour.

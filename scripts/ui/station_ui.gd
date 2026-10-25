@@ -16,6 +16,9 @@ var loc_index := 0
 var tab := "refinery"
 var fab_tab := "ships"
 var market_tab := "sell"
+var weapon_base := "mining_lasers"  # which weapon's five marks the weapon lists show
+var module_cat := ""  # which kind of module the module lists show ("" all)
+var _panel: PanelContainer
 var _title: Label
 var _sub: Label
 var _side: RichTextLabel
@@ -39,6 +42,7 @@ func _ready() -> void:
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(1480, 860)
 	add_child(panel)
+	_panel = panel
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 12)
 	panel.add_child(root)
@@ -105,6 +109,7 @@ func open(kind: String, l: Dictionary) -> void:
 	_scroll.scroll_vertical = 0
 	_rebuild()
 	show()
+	UI.pop_in(_panel)
 
 
 func _clear(box: Container) -> void:
@@ -187,6 +192,8 @@ func _side_text() -> String:
 		s += "[color=%s]%s[/color] [color=%s]%s[/color] x%d\n" % [UI.hex(Game.ORES[parts[0]].color),
 			Game.ORES[parts[0]].name, UI.hex(Game.Q_COLORS[q]), Game.q_tag(q, true), Game.cargo[key]]
 	s += "\nProbes  %d" % Game.probes
+	if Game.portals > 0:
+		s += "\n[color=#e080ff]Portable wormholes  %d[/color]" % Game.portals
 	return s
 
 
@@ -357,6 +364,13 @@ func _build_market(sys: Dictionary) -> void:
 					[["Sell 10", Game.sell.bind(o, 10, cat), true], ["Sell All", Game.sell.bind(o, n, cat), true]], Game.ORES[o].color)
 			if not any:
 				_note("You have no refined materials to sell. Smelt some ore first.")
+			else:
+				_row("credits", UI.GOLD, "Sell everything", "Every refined material you have, at this market's prices.", null,
+					[["Sell All", _sell_all.bind(cat), true]], UI.GOLD)
+			if Game.portals > 0:
+				_row("anomaly", Color("e080ff"), "Portable wormhole   x%d" % Game.portals,
+					"Collectors pay [color=#ffd24a]%d credits[/color] for one. Or keep it: from the galaxy map it takes you anywhere." % Game.WORMHOLE_PRICE,
+					null, [["Sell one", _sell_portal, true]], Color("e080ff"))
 		"supplies":
 			_section("SUPPLIES", "cargo")
 			_row("probe", Color("9fd3ff"), "Probe", "Ready-made probe.  %d credits each." % Game.PROBE_PRICE, null,
@@ -369,27 +383,37 @@ func _build_market(sys: Dictionary) -> void:
 					Game.ORES[o].color)
 		"ships":
 			_buy_note()
+			var tier := -1
 			for id in Game.SHIP_ORDER:
 				if id == "wren":
 					continue
 				var s: Dictionary = Game.SHIPS[id]
+				if s.tier != tier:
+					tier = s.tier
+					_section("TIER %d" % tier, "ship")
 				_buy_row("ship", id, "ship", s.colors[1], "%s  (%s)" % [s.name, s["class"]],
-					"%s\nHull %d   Shield %d   Speed %d   Cargo %d   Gun slots %d   Module slots %d" % [s.desc, s.hull, s.shield,
-						s.speed, s.cargo, s.guns, s.modules], Game.owned_ships.has(id), Color("9fd3ff"))
+					"%s\n%s" % [s.desc, _ship_line(s)], Game.owned_ships.has(id), Color("9fd3ff"))
 		"weapons":
 			_buy_note()
+			_weapon_bar()
 			for id in Game.WEAPON_ORDER:
-				if id == "twin_blasters":
-					continue
 				var w: Dictionary = Game.WEAPONS[id]
+				if w.base != weapon_base or id == Game.BLASTER:
+					continue
 				_buy_row("weapon", id, "weapon", w.color, "%s   (have %d)" % [w.name, Game.weapon_count(id)],
 					"%s\n%s\nOne purchase arms one gun slot." % [w.desc, _weapon_line(w)], false, w.color)
 		"modules":
 			_buy_note()
+			_module_bar()
 			for id in Game.MODULE_ORDER:
 				var m: Dictionary = Game.MODULES[id]
+				if module_cat != "" and m.cat != module_cat:
+					continue
 				var have: int = Game.module_stock.get(id, 0) + Game.modules_equipped.count(id)
-				_buy_row("module", id, "module", Color("c9b6ff"), "%s   (have %d)" % [m.name, have], m.desc, false, Color("c9b6ff"))
+				var col := Game.module_color(id)
+				_buy_row("module", id, Game.module_icon(id), col, "%s   (have %d)" % [m.name, have],
+					"[color=%s]%s[/color]   %s" % [UI.hex(col), Game.MODULE_CATS[m.cat].name.to_upper(), m.desc], false,
+					col.lerp(UI.TEXT, 0.35))
 
 
 func _buy_note() -> void:
@@ -418,6 +442,73 @@ func _buy_row(kind: String, id: String, icon: String, icon_color: Color, title: 
 	_content.add_child(c.root)
 
 
+func _sell_all(cat: int) -> void:
+	for o in Game.ORE_ORDER:
+		if Game.have(o) > 0:
+			Game.sell(o, Game.have(o), cat)
+
+
+func _sell_portal() -> void:
+	Game.sell_portal()
+
+
+## A line of the ship's numbers.
+func _ship_line(s: Dictionary) -> String:
+	var t := "Hull %d   Shield %d   Speed %d   Turn %.1f   Cargo %d   Gun slots %d   Module slots %d" % [s.hull, s.shield, s.speed,
+		s.turn, s.cargo, s.guns, s.modules]
+	if s.get("jump", 0) > 0:
+		t += "   [color=#c080ff]Jump drive %d[/color]" % s.jump
+	if s.get("refinery", false):
+		t += "   [color=#ff9a3d]Refinery-capable[/color]"
+	return t
+
+
+## Buttons to pick which weapon's marks to list (one per weapon, in its colour).
+func _weapon_bar() -> void:
+	var bar := HFlowContainer.new()
+	bar.add_theme_constant_override("h_separation", 6)
+	bar.add_theme_constant_override("v_separation", 6)
+	for id in Game.WEAPON_BASE_ORDER:
+		var w: Dictionary = Game.WEAPON_BASE[id]
+		var b := UI.btn(w.name, _pick_base.bind(id), "weapon", w.color)
+		b.toggle_mode = true
+		b.button_pressed = id == weapon_base
+		bar.add_child(b)
+	_content.add_child(bar)
+
+
+## Buttons to narrow the module lists to one kind (each in its kind's colour and icon).
+func _module_bar() -> void:
+	var bar := HFlowContainer.new()
+	bar.add_theme_constant_override("h_separation", 6)
+	bar.add_theme_constant_override("v_separation", 6)
+	var all := UI.btn("All", _pick_cat.bind(""), "module")
+	all.toggle_mode = true
+	all.button_pressed = module_cat == ""
+	bar.add_child(all)
+	for c in Game.MODULE_CATS:
+		var mc: Dictionary = Game.MODULE_CATS[c]
+		var b := UI.btn(mc.name, _pick_cat.bind(c), mc.icon, mc.color)
+		b.toggle_mode = true
+		b.button_pressed = module_cat == c
+		bar.add_child(b)
+	_content.add_child(bar)
+
+
+func _pick_base(id: String) -> void:
+	weapon_base = id
+	_rebuild()
+
+
+func _pick_cat(c: String) -> void:
+	module_cat = c
+	_rebuild()
+
+
+func _pin_btn(kind: String, id: String) -> Array:
+	return ["Unpin" if Game.is_pinned(kind, id) else "Pin", Game.toggle_pin.bind(kind, id), true]
+
+
 func _buy_ready(kind: String, id: String, label: String) -> void:
 	if Game.buy_ready_made(kind, id):
 		Sfx.play("refine", -4.0)
@@ -438,30 +529,42 @@ func _build_fabricator() -> void:
 	_content.add_child(bar)
 	match fab_tab:
 		"ships":
+			_note("Over fifty ships in ten tiers. From tier 3 on they need ores from the regions further out (the Guide, H, says where).")
+			var tier := -1
 			for id in Game.SHIP_ORDER:
 				if id == "wren":
 					continue
 				var s: Dictionary = Game.SHIPS[id]
+				if s.tier != tier:
+					tier = s.tier
+					_section("TIER %d%s" % [tier, "  -  CAPITAL SHIPS (too big for docking bays: they tether, and jump)" if tier == 9 else ""], "ship")
 				var owned: bool = Game.owned_ships.has(id)
-				_row("ship", s.colors[1], "%s  (%s)" % [s.name, s["class"]],
-					"%s\nHull %d   Shield %d   Speed %d   Turn %.1f   Cargo %d   Gun slots %d   Module slots %d" % [s.desc, s.hull,
-						s.shield, s.speed, s.turn, s.cargo, s.guns, s.modules], null if owned else Game.build_cost("ship", id),
-					[["Owned" if owned else "Build", _do_build.bind("ship", id, s.name, 1), not owned and Game.can_afford(Game.build_cost("ship", id))]],
-					Color("9fd3ff"))
+				_row("ship", s.colors[1], "%s  (%s)" % [s.name, s["class"]], "%s\n%s" % [s.desc, _ship_line(s)],
+					null if owned else Game.build_cost("ship", id),
+					[["Owned" if owned else "Build", _do_build.bind("ship", id, s.name, 1), not owned and Game.can_afford(Game.build_cost("ship", id))],
+					_pin_btn("ship", id)], Color("9fd3ff"))
 		"weapons":
+			_weapon_bar()
 			for id in Game.WEAPON_ORDER:
-				if id == "twin_blasters":
-					continue
 				var w: Dictionary = Game.WEAPONS[id]
+				if w.base != weapon_base or id == Game.BLASTER:
+					continue
 				_row("weapon", w.color, "%s   (have %d)" % [w.name, Game.weapon_count(id)],
 					"%s\n%s\nOne build arms one gun slot." % [w.desc, _weapon_line(w)], Game.build_cost("weapon", id),
-					[["Build", _do_build.bind("weapon", id, w.name, 1), Game.can_afford(Game.build_cost("weapon", id))]], w.color)
+					[["Build", _do_build.bind("weapon", id, w.name, 1), Game.can_afford(Game.build_cost("weapon", id))],
+					_pin_btn("weapon", id)], w.color)
 		"modules":
+			_module_bar()
 			for id in Game.MODULE_ORDER:
 				var m: Dictionary = Game.MODULES[id]
+				if module_cat != "" and m.cat != module_cat:
+					continue
 				var have: int = Game.module_stock.get(id, 0) + Game.modules_equipped.count(id)
-				_row("module", Color("c9b6ff"), "%s   (have %d)" % [m.name, have], m.desc, Game.build_cost("module", id),
-					[["Build", _do_build.bind("module", id, m.name, 1), Game.can_afford(Game.build_cost("module", id))]], Color("c9b6ff"))
+				var col := Game.module_color(id)
+				_row(Game.module_icon(id), col, "%s   (have %d)" % [m.name, have],
+					"[color=%s]%s[/color]   %s" % [UI.hex(col), Game.MODULE_CATS[m.cat].name.to_upper(), m.desc], Game.build_cost("module", id),
+					[["Build", _do_build.bind("module", id, m.name, 1), Game.can_afford(Game.build_cost("module", id))],
+					_pin_btn("module", id)], col.lerp(UI.TEXT, 0.35))
 		"supplies":
 			var five := {}
 			for k in Game.PROBE_COST:
@@ -562,15 +665,17 @@ func _build_hangar() -> void:
 			[["Flying" if here else "Board", Game.board_ship.bind(id), not here]], Color("9fd3ff"))
 	_section("MODULES  (%d / %d slots)" % [Game.modules_equipped.size(), st.slots], "module")
 	for i in Game.modules_equipped.size():
-		var m: Dictionary = Game.MODULES[Game.modules_equipped[i]]
-		_row("module", UI.GOOD, m.name + "   [installed]", m.desc, null, [["Remove", Game.unequip_module.bind(i), true]],
-			Color("c9b6ff"))
+		var mid: String = Game.modules_equipped[i]
+		var m: Dictionary = Game.MODULES[mid]
+		_row(Game.module_icon(mid), Game.module_color(mid), m.name + "   [installed]", m.desc, null,
+			[["Remove", Game.unequip_module.bind(i), true]], Game.module_color(mid).lerp(UI.TEXT, 0.35))
 	for id in Game.MODULE_ORDER:
 		var n: int = Game.module_stock.get(id, 0)
 		if n > 0:
 			var m: Dictionary = Game.MODULES[id]
-			_row("module", Color("c9b6ff"), "%s  x%d" % [m.name, n], m.desc, null,
-				[["Install", Game.equip_module.bind(id), Game.modules_equipped.size() < st.slots]], Color("c9b6ff"))
+			_row(Game.module_icon(id), Game.module_color(id), "%s  x%d" % [m.name, n], m.desc, null,
+				[["Install", Game.equip_module.bind(id), Game.modules_equipped.size() < st.slots and Game.module_fits(id)]],
+				Game.module_color(id).lerp(UI.TEXT, 0.35))
 	if Game.modules_equipped.is_empty() and Game.module_stock.values().all(func(v): return v <= 0):
 		_note("No modules yet. Build some in the Fabricator, or find them in wrecks.")
 

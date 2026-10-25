@@ -11,6 +11,9 @@ extends Node
 ## played at different pitches; a big reverb on the Music bus turns them into a cathedral.
 
 const RATE := 22050
+const VOICES := 32  # short effects share these
+const LONG := ["warp", "charge", "arrive", "dock", "explode", "boost", "found", "alarm", "refine"]  # get their own players
+const MIN_GAP := 0.03  # seconds: the same sound again sooner than this just tops up the one playing
 const SETTINGS_PATH := "user://settings.cfg"
 const TICK := 1.25  # seconds between clock ticks
 const CHORD_TICKS := 8  # ticks per chord (10 s)
@@ -35,6 +38,10 @@ var _players: Array[AudioStreamPlayer] = []
 var _next := 0
 var _engine: AudioStreamPlayer
 var _engine_level := 0.0
+var _beam: AudioStreamPlayer  # the mining beam's hum
+var _beam_level := 0.0
+var _long := {}  # sound -> its own player
+var _last := {}  # sound -> when it last started (msec)
 var _thread: Thread
 # music
 var _organ: AudioStreamWAV
@@ -57,15 +64,24 @@ func _ready() -> void:
 			AudioServer.set_bus_send(AudioServer.bus_count - 1, "Master")
 	_setup_reverb()
 	_load_settings()
-	for i in 16:
+	for i in VOICES:
 		var p := AudioStreamPlayer.new()
 		p.bus = "SFX"
 		add_child(p)
 		_players.append(p)
+	for s in LONG:
+		var p := AudioStreamPlayer.new()
+		p.bus = "SFX"
+		add_child(p)
+		_long[s] = p
 	_engine = AudioStreamPlayer.new()
 	_engine.bus = "SFX"
 	_engine.volume_db = -80.0
 	add_child(_engine)
+	_beam = AudioStreamPlayer.new()
+	_beam.bus = "SFX"
+	_beam.volume_db = -80.0
+	add_child(_beam)
 	for i in 14:
 		var v := AudioStreamPlayer.new()
 		v.bus = "Music"
@@ -92,6 +108,7 @@ func _ready() -> void:
 	_streams["found"] = _notes([220.0, 330.0, 440.0, 660.0], 0.12)
 	_streams["alarm"] = _notes([440.0, 330.0, 440.0, 330.0], 0.12)
 	_engine.stream = _engine_loop()
+	_beam.stream = _beam_loop()
 	_thread = Thread.new()
 	_thread.start(_build_music)
 
@@ -101,13 +118,41 @@ func _exit_tree() -> void:
 		_thread.wait_to_finish()
 
 
+## Play a sound effect. The long ones (warps, docking, explosions...) each have their own player, so a burst
+## of gunfire never cuts them off; short ones take a free voice (or the oldest). The same sound asked for again
+## within a couple of frames doesn't stack up into one loud click.
 func play(sound: String, db := 0.0, pitch := 1.0) -> void:
-	var p := _players[_next]
-	_next = (_next + 1) % _players.size()
+	var now := Time.get_ticks_msec()
+	if now - _last.get(sound, -1000) < MIN_GAP * 1000.0 and not _long.has(sound):
+		return
+	_last[sound] = now
+	var p: AudioStreamPlayer = _long.get(sound, null)
+	if p == null:
+		p = _players[_next]
+		for k in _players.size():  # a voice that's finished, if there is one
+			var q := _players[(_next + k) % _players.size()]
+			if not q.playing:
+				p = q
+				_next = (_next + k) % _players.size()
+				break
+		_next = (_next + 1) % _players.size()
 	p.stream = _streams[sound]
 	p.volume_db = db
 	p.pitch_scale = pitch
 	p.play()
+
+
+## The mining beam's hum (0: off, 1: a beam cutting).
+func set_beam(level: float) -> void:
+	_beam_level = move_toward(_beam_level, level, 0.12)
+	if _beam_level < 0.01:
+		if _beam.playing:
+			_beam.stop()
+		return
+	if not _beam.playing:
+		_beam.play()
+	_beam.volume_db = linear_to_db(_beam_level * 0.5) - 8.0
+	_beam.pitch_scale = 0.9 + 0.1 * _beam_level
 
 
 ## The engine rumble follows the throttle (0..1); `hot` (boost / warp) pitches it up a little.
@@ -362,6 +407,22 @@ func _notes(freqs: Array, each: float) -> AudioStreamWAV:
 			var v := (sin(TAU * freqs[k] * i / RATE) + sin(TAU * freqs[k] * 2.0 * i / RATE) * 0.15) * env * 0.35
 			data.encode_s16((k * per + i) * 2, int(v * 32767.0))
 	return _wav(data)
+
+
+## A seamless 1 s loop for the mining beam: a steady low hum with a soft shimmer over it.
+func _beam_loop() -> AudioStreamWAV:
+	var n := RATE
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		var t := float(i) / RATE
+		var v := sin(TAU * 110.0 * t) * 0.5 + sin(TAU * 220.0 * t) * 0.25 + sin(TAU * 333.0 * t) * 0.1 * (0.5 + 0.5 * sin(TAU * 6.0 * t))
+		data.encode_s16(i * 2, int(clampf(v * 0.3, -1.0, 1.0) * 32767.0))
+	var s := _wav(data)
+	s.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	s.loop_begin = 0
+	s.loop_end = n
+	return s
 
 
 ## A seamless 2 s loop of engine rumble: a deep hum plus a bed of low random partials (all whole numbers

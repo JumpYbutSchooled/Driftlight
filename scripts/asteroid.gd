@@ -78,7 +78,9 @@ func ping(delay: float) -> void:
 		_hit_t = 4.0  # a brighter glint than a bolt hit
 
 
-func hit(power: float, dir: Vector3) -> void:
+## `collect`: the share of the pieces that go straight into the hold (a mining beam cuts them right in) -
+## the rest break off as loose chunks to pick up.
+func hit(power: float, dir: Vector3, collect := 0.0) -> void:
 	if remaining <= 0:
 		return
 	_hit_t = 1.0
@@ -87,9 +89,12 @@ func hit(power: float, dir: Vector3) -> void:
 	while _acc >= cost and remaining > 0:
 		_acc -= cost
 		remaining -= 1
+		var amount := 2 if Game.blessings.has("plenty") else 1
+		if collect > 0.0 and randf() < collect and Game.add_cargo(ore_id, quality, amount):
+			Sfx.play("pickup", -16.0, randf_range(1.0, 1.15))
+			continue
 		# pieces break off the side you're shooting at
 		var out := (-dir + Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 0.45).normalized()
-		var amount := 2 if Game.blessings.has("plenty") else 1
 		main.spawn_chunk(ore_id, quality, amount, position + out * radius * 0.9, out * randf_range(6.0, 12.0) - dir * 3.0)
 	if remaining <= 0:
 		main.explosion(position, minf(radius / 6.0, 6.0), Game.ORES[ore_id].color, true)

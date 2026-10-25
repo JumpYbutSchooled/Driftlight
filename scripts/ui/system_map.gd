@@ -31,6 +31,7 @@ func _ready() -> void:
 
 func open() -> void:
 	show()
+	UI.pop_in(self)
 
 
 func close() -> void:
@@ -101,15 +102,18 @@ func _update_probe(delta: float) -> void:
 	if _beep_t <= 0.0:
 		_beep_t = lerpf(1.1, 0.07, pow(_prox, 0.8))
 		Sfx.play("beep", -12.0, 1.0 + _prox * 0.6)
-	for l in sys.locs:
+	for i in sys.locs.size():
+		var l: Dictionary = sys.locs[i]
 		var d: float = probe_pos.distance_to(l.map_pos)
 		if l.kind == "planet" and not l.scanned and d < 0.07:
 			l.scanned = true
+			Game.note_loc(Game.current_system, i)
 			Game.say("Probe scan: %s - %s" % [l.name, Game.loc_summary(l)], Color("9fd3ff"))
 			Game.event("scan")
 			Sfx.play("pickup", -8.0, 0.8)
 		elif l.kind == "anomaly" and not l.found and d < 0.05:
 			l.found = true
+			Game.note_loc(Game.current_system, i)
 			Game.say("ANOMALY FOUND: %s! It now shows in your warp menu." % l.name, Color("e080ff"))
 			Game.event("anomaly")
 			Sfx.play("found")

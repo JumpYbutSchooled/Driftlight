@@ -6,13 +6,14 @@ render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabl
 
 uniform vec4 color : source_color = vec4(1.0, 0.35, 0.3, 1.0);
 uniform float intensity = 1.0;
+uniform float steady = 0.0;  // 1: a continuous beam (mining lasers, tractor beams): even along its length, energy rippling down it
 
 void fragment() {
 	float x = abs(UV.x - 0.5) * 2.0;  // 0 down the middle, 1 at the edge
 	float core = exp(-x * x * 70.0);
 	float glow = exp(-x * x * 7.0) * (1.0 - x);
-	float head = smoothstep(0.0, 0.035, UV.y);  // a softly rounded tip
-	float fade = pow(1.0 - UV.y, 1.8);
+	float head = mix(smoothstep(0.0, 0.035, UV.y), 1.0, steady);  // a softly rounded tip
+	float fade = mix(pow(1.0 - UV.y, 1.8), 0.75 + 0.25 * sin(UV.y * 60.0 + TIME * 40.0), steady);
 	ALBEDO = color.rgb * glow * 1.5 + vec3(1.0, 0.97, 0.92) * core * 2.4;
 	ALPHA = clamp((glow * 0.7 + core) * head * fade * intensity, 0.0, 1.0);
 }

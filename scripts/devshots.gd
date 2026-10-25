@@ -34,6 +34,12 @@ func _gallery() -> void:
 	p.visible = false
 	var at: Vector3 = p.position
 	var ids: Array = Game.SHIPS.keys() + Game.ENEMIES.keys()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--only="):  # just these models
+			ids = Array(a.substr(7).split(","))
+	var sheet: Image = null
+	if "--sheet" in OS.get_cmdline_user_args():  # every ship on one contact sheet, from the front quarter
+		sheet = Image.create(480 * 6, 300 * ceili(ids.size() / 6.0), false, Image.FORMAT_RGBA8)
 	for id in ids:
 		var m: Node3D = Models.ship(id)
 		main.world.add_child(m)
@@ -43,15 +49,31 @@ func _gallery() -> void:
 			tu.yaw.rotation.y = 0.5
 			tu.pitch.rotation.x = 0.3
 		var s: Vector3 = Models.size(id)
-		var r := maxf(s.x, s.z)
+		var r := maxf(s.x, s.z) if Models.scale_of(id) == 1.0 else maxf(s.x, s.z) * 0.9
 		var sun: Vector3 = main.sun_dir_world
-		for view in [["front", Vector3(0.8, 0.45, -1.0)], ["rear", Vector3(-0.9, 0.35, 1.0)], ["sunside", sun + Vector3(0.3, 0.3, 0.0)]]:
-			main.camera.global_position = at + (view[1] as Vector3).normalized() * r * 1.4
+		var views := [["front", Vector3(0.8, 0.45, -1.0)], ["rear", Vector3(-0.9, 0.35, 1.0)], ["sunside", sun + Vector3(0.3, 0.3, 0.0)]]
+		if sheet != null:
+			views = [["sun", (sun + Vector3(0.0, 0.35, 0.0)).normalized() + Vector3(0.25, 0.0, -0.35)]]
+		for view in views:
+			main.camera.global_position = at + (view[1] as Vector3).normalized() * r * (0.95 if sheet != null else 1.4)
 			main.camera.look_at(at, Vector3.UP)
+			main.camera.far = r * 20.0 + 2000.0
 			await _wait(6)
-			await _shot("g_%s_%s" % [id, view[0]])
+			if sheet != null:
+				# one tile per ship on a contact sheet
+				await RenderingServer.frame_post_draw
+				var img := get_viewport().get_texture().get_image()
+				img.convert(Image.FORMAT_RGBA8)
+				img.resize(480, 300, Image.INTERPOLATE_LANCZOS)
+				var k: int = ids.find(id)
+				sheet.blit_rect(img, Rect2i(0, 0, 480, 300), Vector2i((k % 6) * 480, floori(k / 6.0) * 300))
+			else:
+				await _shot("g_%s_%s" % [id, view[0]])
 		m.queue_free()
 		await _wait(2)
+	if sheet != null:
+		sheet.save_png(dir.path_join("ship_sheet.png"))
+		print("SHEET ship_sheet")
 	get_tree().quit()
 
 
@@ -136,9 +158,17 @@ func _run() -> void:
 	var mm := InputEventMouseMotion.new()
 	mm.relative = Vector2(-300, 0)
 	var nose: Vector3 = p.forward()
+	var look0: Vector3 = -main.camera.global_basis.z
 	main._input(mm)
 	await _secs(0.3)
-	print("mouse look: camera yaw %.0f deg, ship turned %.1f deg" % [rad_to_deg(main._cam_yaw), rad_to_deg(nose.angle_to(p.forward()))])
+	print("mouse look: camera turned %.0f deg, ship turned %.1f deg" % [rad_to_deg(look0.angle_to(-main.camera.global_basis.z)),
+		rad_to_deg(nose.angle_to(p.forward()))])
+	# and right over the top: no limit on looking up
+	mm.relative = Vector2(0, -900)
+	main._input(mm)
+	await _secs(0.4)
+	print("mouse look over the top: camera up is now %.2f (negative: upside down, past the vertical)" % main.camera.global_basis.y.y)
+	main.snap_camera()
 	main.snap_camera()
 	p.throttle = 1.0
 	await _secs(3.0)
@@ -234,8 +264,7 @@ func _run() -> void:
 	# engine plumes at full throttle, seen from the side and from behind
 	p.throttle = 1.0
 	await _secs(1.5)
-	main._cam_yaw += 1.3
-	main._cam_pitch -= 0.12
+	main.cam_turn(1.3, -0.12)
 	await _secs(0.4)
 	await _shot("02c_plumes")
 	main.snap_camera()
@@ -309,8 +338,7 @@ func _run() -> void:
 	# close in on the guns while they fire: each beam should start at its barrel
 	main._zoom_to = 0.55
 	main.zoom = 0.55
-	main._cam_yaw += 0.5
-	main._cam_pitch -= 0.25
+	main.cam_turn(0.5, -0.25)
 	await _secs(0.5)
 	await _shot("03e_turrets_firing")
 	Input.action_release("fire")
@@ -342,6 +370,51 @@ func _run() -> void:
 	Engine.time_scale = 1.0
 	print("auto-collect: %d pieces in reach, cargo %d -> %d in %.1f s real (x6), autopilot now %s" % [reach, cargo0,
 		Game.cargo_used(), (Time.get_ticks_msec() - t0) / 1000.0, main.autopilot.get("mode", "off")])
+
+	# mining beams: Mk III lasers on both turrets lock on to a rock and cut ore straight into the hold
+	Game.weapon_stock["mining_lasers_mk3"] = 2
+	Game.mount_all("mining_lasers_mk3")
+	await _wait(2)
+	print("turret models after the swap: %s" % str(p.turrets.map(func(tu): return tu.kind)))
+	var beam_rock = null
+	for a in get_tree().get_nodes_in_group("asteroids"):
+		if beam_rock == null or a.position.distance_to(p.position) < beam_rock.position.distance_to(p.position):
+			beam_rock = a
+	p.position = beam_rock.position + Vector3(0, 30, beam_rock.radius + 120.0)
+	main.aim = Basis.looking_at((beam_rock.position - p.position).normalized(), Vector3.UP)
+	p.basis = main.aim
+	p.stop()
+	main.snap_camera()
+	await _secs(0.6)
+	var held0 := Game.cargo_used()
+	var chunks0 := get_tree().get_nodes_in_group("chunks").size()
+	var left0: int = beam_rock.remaining
+	Input.action_press("fire")
+	await _secs(0.4)
+	main.cam_turn(0.6, 0.3)  # the beams stay locked whatever the crosshair does
+	await _secs(2.6)
+	await _shot("03h_mining_beam")
+	print("mining beam: locked %s, rock %d -> %d, hold %d -> %d, new loose chunks %d" % [p.beam_lock == beam_rock, left0,
+		beam_rock.remaining if is_instance_valid(beam_rock) else 0, held0, Game.cargo_used(),
+		get_tree().get_nodes_in_group("chunks").size() - chunks0])
+	Input.action_release("fire")
+	main.snap_camera()
+	await _secs(1.5)
+	print("tractor beam: reach %.0f m, %d chunks being pulled" % [p.tractor_range(),
+		get_tree().get_nodes_in_group("chunks").filter(func(c): return c.tractored).size()])
+	# jettison: a cargo stack thrown out the back as loose ore, which can't be scooped straight back up
+	Game.cargo["corrite:1"] = 30
+	Game.changed.emit()
+	var c0 := get_tree().get_nodes_in_group("chunks").size()
+	Game.jettison("corrite:1")
+	await _secs(0.8)
+	print("jettison: %d chunks out the back, hold has corrite: %s" % [get_tree().get_nodes_in_group("chunks").size() - c0,
+		Game.cargo.has("corrite:1")])
+	main.cam_turn(PI, -0.2)
+	await _secs(0.4)
+	await _shot("03i_jettison")
+	main.snap_camera()
+	Game.mount_all(Game.BLASTER)
 
 	# a fight in Wild space with every pirate type
 	var wild := _find(func(s, l): return s.cat == Game.CAT_PURPLE and l.kind == "planet" and l.ore)
@@ -386,8 +459,7 @@ func _run() -> void:
 	side.speed = 0.0
 	for k in 2:  # twice: the camera moves round the ship as it turns, so aim again from where it ends up
 		var to_side: Vector3 = (side.position - main.camera.global_position).normalized()
-		main._cam_yaw = atan2(-to_side.x, -to_side.z)
-		main._cam_pitch = asin(clampf(to_side.y, -1.0, 1.0))
+		main.cam_look(to_side, true)
 		await _secs(0.6)
 	Input.action_press("fire")
 	await _secs(0.5)
@@ -422,6 +494,39 @@ func _run() -> void:
 		await _shot("05b_local_arrival")
 	else:
 		print("local warp: nothing far enough away")
+	# an anomaly's huge field: hundreds of veins, the common ores among them
+	var anom := _find(func(s, l): return l.kind == "anomaly")
+	Game.peaceful = true
+	main.enter_location(anom[0], anom[1])
+	main._pirate_timer = -1.0
+	await _secs(0.8)
+	var kinds := {}
+	for a in get_tree().get_nodes_in_group("asteroids"):
+		kinds[a.ore_id] = kinds.get(a.ore_id, 0) + 1
+	print("anomaly field: %d veins, by ore %s" % [get_tree().get_nodes_in_group("asteroids").size(), str(kinds)])
+	main._zoom_to = 40.0
+	await _secs(1.5)
+	await _shot("05c_anomaly_field")
+	main._zoom_to = 1.0
+	main.zoom = 1.0
+	# an ancient relic: decode it
+	var rel := _find(func(s, l): return l.get("relic", false) and l.kind == "planet")
+	main.enter_location(rel[0], rel[1])
+	main._pirate_timer = -1.0
+	await _secs(0.6)
+	for lm in main.landmarks:
+		if lm.kind == "relic":
+			p.position = lm.pos + Vector3(0, 60, 260)
+			main.aim = Basis.looking_at((lm.pos - p.position).normalized(), Vector3.UP)
+			p.basis = main.aim
+			main.snap_camera()
+			await _secs(0.6)
+			await _shot("05d_relic")
+			var cr0 := Game.credits
+			lm.action.call()
+			print("relic: decoded, credits %d -> %d, portals %d" % [cr0, Game.credits, Game.portals])
+	Game.peaceful = false
+	print("notebook: %d places, %d with a refinery" % [Game.notebook.size(), Game.notes_with("refinery").size()])
 	# warp to a gate in The Core
 	main.enter_location(0, 0)
 	await _secs(0.5)
@@ -480,7 +585,39 @@ func _run() -> void:
 	print("arrived in system %d (wanted %d)" % [Game.current_system, dest_id])
 	await _secs(0.3)
 	await _shot("07d_gate_arrival")
+	# auto-travel: a route of a few jumps (through safe space), with a stop on the way, flown on its own
+	var far_safe := -1
+	for id in Game.systems_within(Game.current_system, 3, 3):
+		if Game.find_path(Game.current_system, id).all(func(s): return Game.systems[s].cat < Game.CAT_PURPLE):
+			far_safe = id
+			break
+	if far_safe >= 0:
+		var path := Game.find_path(Game.current_system, far_safe)
+		Game.clear_route()
+		Game.route_target = path[0]
+		Game.add_stop(far_safe)
+		main.toggle_auto()
+		Engine.time_scale = 6.0
+		t0 = Time.get_ticks_msec()
+		var warps := 0
+		var was_warp := false
+		while main.auto_travel and Time.get_ticks_msec() - t0 < 120000:
+			await get_tree().process_frame
+			if main.mode == "dialog":
+				main.confirm._answer(true)
+			if main.mode == "warp" and not was_warp:
+				warps += 1
+			was_warp = main.mode == "warp"
+		Engine.time_scale = 1.0
+		print("auto-travel: now in %d (wanted %d) after %.1f s real (x6), %d warps and jumps, route left %d" % [Game.current_system,
+			far_safe, (Time.get_ticks_msec() - t0) / 1000.0, warps, Game.route_target])
+		await _secs(0.4)
+		await _shot("07e_auto_arrival")
+	else:
+		print("auto-travel: no safe system three jumps out")
 
+	while main.mode != "fly" or not main.travel.is_empty():
+		await get_tree().process_frame
 	# photo mode: the UI hides, time stops, and a free camera looks back at the ship
 	main.toggle_photo()
 	main.camera.global_position = p.position + Vector3(p.radius * 3.0, p.radius * 1.2, p.radius * 2.0)
@@ -490,19 +627,51 @@ func _run() -> void:
 	print("photo mode: on=%s  time_scale=%.1f  ui hidden=%s" % [main.photo, Engine.time_scale, not main.ui_layer.visible])
 	main.toggle_photo()
 	await _wait(2)
-	# the admin slot (only on the admin device): everything free, fill up, jump straight to a far system
-	Game.use_slot("admin")
-	print("admin: allowed=%s admin=%s god=%s free titan=%s" % [Game.admin_allowed(), Game.admin, Game.god,
-		Game.can_afford(Game.build_cost("ship", "titan"))])
-	if Game.admin:
-		Game.admin_fill()
+	# the sandbox slot (anyone can play it): everything free, fill up, jump straight to a far system
+	Game.use_slot("sandbox")
+	print("sandbox: on=%s god=%s free aeon=%s" % [Game.sandbox, Game.god, Game.can_afford(Game.build_cost("ship", "aeon"))])
+	if Game.sandbox:
+		Game.sandbox_fill()
 		var far_sys: int = Game.systems.size() - 1
 		main.admin_jump(far_sys)
 		while main.mode != "fly" or not main.travel.is_empty():
 			await get_tree().process_frame
-		print("admin jump: now in system %d (wanted %d), credits %d, ships %d" % [Game.current_system, far_sys, Game.credits,
+		print("sandbox jump: now in system %d (wanted %d), credits %d, ships %d" % [Game.current_system, far_sys, Game.credits,
 			Game.owned_ships.size()])
-		await _shot("08b_admin_jump")
+		await _shot("08b_sandbox_jump")
+		# a capital ship: hundreds of metres long, too big for a bay, with its own jump drive
+		Game.board_ship("sovereign")
+		main.enter_location(0, 0)
+		Game.peaceful = true
+		await _secs(1.2)
+		print("capital: %s radius %.0f m, %d turrets, jump reach %.0f" % [Game.SHIPS[Game.ship_id].name, p.radius, p.turrets.size(),
+			p.st.jump])
+		main._zoom_to = 1.0
+		await _secs(0.5)
+		await _shot("11_capital")
+		main.cam_turn(2.4, -0.3)
+		main._zoom_to = 1.6
+		await _secs(1.2)
+		await _shot("11b_capital_side")
+		main._zoom_to = 1.0
+		var hop: int = main._jump_hop(Game.systems.size() - 1)
+		main.jump_drive(hop)
+		t0 = Time.get_ticks_msec()
+		var dshot := false
+		while (main.mode != "fly" or not main.travel.is_empty()) and Time.get_ticks_msec() - t0 < 60000:
+			await get_tree().process_frame
+			if main.mode == "dialog":
+				main.confirm._answer(true)
+			if not dshot and main.travel.get("phase", "") == "charge" and main.travel.t > 2.0:
+				dshot = true
+				await _shot("11c_jump_drive_charge")
+		print("jump drive: now in system %d (wanted %d), %.0f map units, cooldown %.0f s" % [Game.current_system, hop,
+			Game.systems[0].pos.distance_to(Game.systems[hop].pos), main._jump_cd])
+		await _secs(0.5)
+		await _shot("11d_jump_drive_arrival")
+		Game.peaceful = false
+		Game.board_ship("wren")
+	Game.peaceful = false
 	Game.use_slot("pilot")
 	# F3 in the Titan
 	Game.owned_ships.append("titan")
@@ -522,5 +691,36 @@ func _run() -> void:
 	await _shot("10_fitting_titan")
 	print("fitting: %d turret rows for the %s" % [Game.loadout().size(), Game.SHIPS[Game.ship_id].name])
 	main.close_fitting()
+	# the menus: galaxy map with its regions, the guide and planner, the notebook, the fabricator
+	main.mode = "map"
+	main.galaxy_map.open()
+	main.galaxy_map.zoom = 0.22
+	await _secs(0.8)
+	await _shot("12_galaxy_regions")
+	main.close_maps()
+	Game.toggle_pin("ship", "falcon")
+	main.mode = "inventory"
+	main.inventory.open("guide")
+	await _secs(0.8)
+	await _shot("13_guide")
+	main.inventory.open("notebook")
+	await _secs(0.6)
+	await _shot("14_notebook")
+	main.close_inventory()
+	await _secs(0.4)
+	await _shot("15_hud_pinned")
+	main.mode = "docked"
+	main.station_ui.open("station", main.current_loc())
+	main.station_ui.fab_tab = "modules"
+	main.station_ui._set_tab("fabricator")
+	await _secs(0.6)
+	await _shot("16_fab_modules")
+	main.station_ui._set_fab_tab("ships")
+	await _secs(0.4)
+	await _shot("16b_fab_ships")
+	main.station_ui.hide()
+	main.mode = "fly"
+	print("content: %d ships, %d weapons, %d modules, %d ores, %d achievements" % [Game.SHIPS.size(), Game.WEAPONS.size(),
+		Game.MODULES.size(), Game.ORES.size(), Game.ACHIEVEMENTS.size()])
 	print("audio peaks over the tour: music %.1f dB, sfx %.1f dB" % [_peaks.Music, _peaks.SFX])
 	get_tree().quit()

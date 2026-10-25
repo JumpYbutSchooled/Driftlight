@@ -23,8 +23,9 @@ func _process(_delta: float) -> void:
 	visible = main.mode == "fly" and main.player.alive and main.target_valid(main.selected) and not main.debug
 	if not visible:
 		return
+	modulate.a = main.hud.part_alpha(14)
 	var vs := get_viewport_rect().size
-	position = Vector2((vs.x - W) / 2.0, 62.0 if Game.route_path().is_empty() else 66.0)
+	position = Vector2((vs.x - W) / 2.0, 62.0 if Game.route_path().is_empty() and not main.auto_travel else 80.0)
 	size = Vector2(W, H)
 	queue_redraw()
 

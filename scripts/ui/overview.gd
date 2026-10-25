@@ -31,6 +31,7 @@ func _process(delta: float) -> void:
 	visible = main.mode == "fly" and main.player.alive and not main.debug
 	if not visible:
 		return
+	modulate.a = main.hud.part_alpha(13)
 	_refresh -= delta
 	if _refresh <= 0.0:
 		_refresh = 0.3

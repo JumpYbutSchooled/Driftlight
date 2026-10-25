@@ -6,7 +6,8 @@ extends Control
 const UI = preload("res://scripts/ui/ui.gd")
 const STARTUP := [["DOCKING CLAMPS", "RELEASED"], ["REACTOR", "ONLINE"], ["LIFE SUPPORT", "NOMINAL"],
 	["SHIELDS", "CHARGED"], ["THRUSTERS", "ONLINE"], ["NAVIGATION", "ONLINE"], ["WEAPONS", "SAFE"]]
-const LINE_GAP := 0.42  # seconds between startup lines
+const LINE_GAP := 0.14  # seconds between startup lines
+const DOCK_TIME := 0.75  # seconds of fade to black while docking
 
 var main
 var _state := "off"  # off, docking, docked, launch
@@ -60,8 +61,8 @@ func _process(delta: float) -> void:
 	_t += delta
 	match _state:
 		"docking":
-			_black = clampf(_t / 1.3, 0.0, 1.0)
-			if _t >= 1.7:
+			_black = clampf(_t / (DOCK_TIME * 0.75), 0.0, 1.0)
+			if _t >= DOCK_TIME:
 				_state = "docked"
 				Sfx.play("dock", -4.0)
 				_done.call()
@@ -72,9 +73,9 @@ func _process(delta: float) -> void:
 			if lines > _shown and _shown < STARTUP.size():
 				_shown = mini(lines, STARTUP.size())
 				Sfx.play("beep", -16.0, 0.8 + _shown * 0.05)
-			var fade_from := STARTUP.size() * LINE_GAP + 0.9
-			_black = 1.0 - clampf((_t - fade_from) / 1.1, 0.0, 1.0)
-			if _t >= fade_from + 1.1:
+			var fade_from := STARTUP.size() * LINE_GAP + 0.3
+			_black = 1.0 - clampf((_t - fade_from) / 0.5, 0.0, 1.0)
+			if _t >= fade_from + 0.5:
 				_state = "off"
 				visible = false
 				_done.call()
@@ -91,7 +92,7 @@ func _draw() -> void:
 			_text(Vector2(0, cy - 10), "DOCKING", 26, Color(UI.HEAD, a * 0.9), vs.x, UI.title)
 			_text(Vector2(0, cy + 24), _title, 18, Color(UI.MUTED, a * 0.8), vs.x)
 			var w := 260.0
-			var k := clampf(_t / 1.7, 0.0, 1.0)
+			var k := clampf(_t / DOCK_TIME, 0.0, 1.0)
 			draw_rect(Rect2((vs.x - w) / 2.0, cy + 44, w, 2), Color(1, 1, 1, 0.1 * a))
 			draw_rect(Rect2((vs.x - w) / 2.0, cy + 44, w * k, 2), Color(UI.GOLD, 0.8 * a))
 		"launch":

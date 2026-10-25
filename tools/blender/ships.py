@@ -812,6 +812,841 @@ def player_ship(sid):
     return k.finish("ships")
 
 
+# ---------------------------------------------------------------- the generated fleet
+
+# The rest of the fleet is built from a handful of archetypes (dart, wedge, block hauler, twin boom, spine
+# explorer, mining barge, cruiser, carrier, saucer), each sized and varied by its spec. Capital ships are
+# built at a modest size and shown `scale` times bigger by the game (its meta carries the scale).
+# id: (archetype, length, width, height, engines, engine radius, turrets, turret size, hull, accent, glass, extras)
+FLEET = {
+    "gnat": ("dart", 5.5, 6.0, 1.2, 1, 0.42, 2, 0.6, "d8dde6", "39a0d8", "9dfcff", {}),
+    "wisp": ("twin", 6.0, 7.0, 1.1, 2, 0.32, 2, 0.6, "eef2f6", "8a7cff", "c8c0ff", {}),
+    "pike": ("wedge", 7.0, 6.0, 1.4, 2, 0.42, 2, 0.75, "b9bcc4", "d84a3a", "ffd27a", {}),
+    "bumble": ("block", 8.0, 4.4, 2.6, 2, 0.55, 2, 0.8, "e0b84a", "3a3a3a", "7ff0ff", {"v": 1}),
+    "drifter": ("spine", 9.0, 3.0, 2.0, 2, 0.4, 2, 0.7, "c8ccd8", "4ab0a0", "aaf8ee", {"ring": True}),
+    "hornet": ("wedge", 8.0, 7.5, 1.6, 2, 0.5, 2, 0.8, "e8c02a", "222428", "ffe7a3", {"v": 1}),
+    "digger": ("miner", 8.0, 6.5, 2.0, 2, 0.55, 2, 0.8, "c86a2a", "3a3330", "ffd27a", {}),
+    "porter": ("block", 11.0, 5.0, 3.0, 2, 0.7, 2, 0.9, "7c8a9a", "e07a3c", "7ff0ff", {}),
+    "falcon": ("dart", 9.0, 9.0, 1.4, 3, 0.4, 2, 0.8, "f0f0ea", "2f6fd8", "9dfcff", {"v": 1}),
+    "vanguard": ("cruiser", 11.0, 6.0, 2.4, 3, 0.55, 4, 0.9, "8a96a8", "e8b84a", "ffe7a3", {}),
+    "quarry": ("miner", 10.0, 8.0, 2.4, 3, 0.6, 2, 0.95, "a0a4ac", "e0b030", "ffe066", {"v": 1}),
+    "wayfarer": ("spine", 12.0, 3.4, 2.2, 2, 0.5, 2, 0.8, "e6dcc8", "c0603a", "ffc890", {"v": 1}),
+    "brick": ("saucer", 7.0, 7.0, 2.6, 2, 0.6, 2, 1.0, "9aa0a8", "5a7090", "8fd8ff", {}),
+    "raptor": ("wedge", 10.0, 9.0, 1.8, 3, 0.55, 4, 0.85, "3a404c", "3fc46a", "9dffc0", {"v": 2}),
+    "bulwark": ("saucer", 9.0, 9.0, 3.0, 3, 0.7, 4, 1.05, "c8ccd4", "3a62b0", "8fd8ff", {"v": 1}),
+    "trawler": ("block", 16.0, 7.0, 4.0, 4, 0.8, 2, 1.0, "6a7a5a", "d8a040", "ffe066", {"v": 2}),
+    "phantom": ("wedge", 9.0, 10.0, 1.0, 2, 0.35, 2, 0.7, "23272e", "3a4458", "70ffe0", {"stealth": True}),
+    "warden": ("saucer", 12.0, 12.0, 3.6, 4, 0.8, 4, 1.2, "e6ecf6", "2fa8c8", "8ff4ff", {"v": 2}),
+    "tempest": ("dart", 13.0, 11.0, 2.0, 3, 0.6, 4, 0.95, "dfe3ea", "7a3ad8", "d8b0ff", {"v": 2}),
+    "excavator": ("miner", 14.0, 11.0, 3.2, 4, 0.75, 4, 1.1, "d8a020", "303030", "ffe066", {"v": 2}),
+    "pathfinder": ("spine", 16.0, 4.0, 3.0, 3, 0.6, 4, 0.95, "d0d8e8", "3a7ad8", "a0d0ff", {"ring": True}),
+    "mantis": ("twin", 12.0, 11.0, 2.0, 2, 0.7, 4, 0.9, "6aa040", "2a3a22", "c8ff8a", {}),
+    "dominator": ("cruiser", 26.0, 9.0, 4.0, 4, 1.0, 6, 1.4, "5a6070", "c83a3a", "ffb08a", {"v": 1}),
+    "atlas": ("block", 30.0, 9.0, 6.0, 4, 1.1, 4, 1.4, "8a8070", "3a8ad0", "7ff0ff", {"v": 3}),
+    "valkyrie": ("dart", 18.0, 15.0, 2.6, 3, 0.8, 4, 1.1, "f4f0f8", "d84a8a", "ffc0e0", {"v": 3}),
+    "obsidian": ("wedge", 16.0, 14.0, 1.8, 3, 0.5, 4, 1.0, "1a1c22", "50306a", "c070ff", {"stealth": True, "v": 4}),
+    "juggernaut": ("cruiser", 55.0, 16.0, 7.0, 6, 1.5, 10, 2.2, "707884", "d8433a", "ffb36b", {"v": 2}),
+    "harbinger": ("cruiser", 42.0, 12.0, 5.0, 4, 1.3, 8, 1.9, "30364a", "3ad0c0", "9ffff0", {"v": 3}),
+    "starminer": ("miner", 40.0, 22.0, 7.0, 4, 1.5, 6, 1.8, "c8a03a", "3a3a3a", "ffe066", {"v": 3}),
+    "paragon": ("dart", 45.0, 30.0, 5.0, 5, 1.4, 8, 1.9, "fff6ea", "e8b84a", "ffe7a3", {"v": 4}),
+    "oracle": ("spine", 50.0, 10.0, 7.0, 4, 1.3, 6, 1.8, "e0e4f0", "8a5ad8", "d8c0ff", {"ring": True, "v": 2}),
+    "colossus": ("carrier", 60.0, 26.0, 8.0, 6, 2.2, 12, 2.4, "7a808c", "d8a83a", "ffe7a3", {"scale": 6.0}),
+    "starforge": ("miner", 60.0, 34.0, 10.0, 6, 2.4, 10, 2.4, "b88a2a", "2a2a2a", "ffd060", {"scale": 6.0, "v": 4}),
+    "sovereign": ("cruiser", 80.0, 24.0, 10.0, 8, 2.4, 14, 2.6, "2a3450", "e8c060", "fff0b0", {"scale": 8.0}),
+    "eclipse": ("spine", 90.0, 30.0, 12.0, 8, 2.8, 16, 2.8, "1e1a2a", "ff7a3a", "ffd0a0", {"scale": 11.0, "ring": True}),
+    "aeon": ("cruiser", 100.0, 34.0, 14.0, 10, 3.0, 18, 3.0, "e8eaf0", "5a9aff", "c0e0ff", {"scale": 14.0, "v": 1}),
+}
+
+
+def engines(k, part, n, r, z=None, y=None):
+    """n nozzles across the back of `part` (two rows when one won't fit)."""
+    y = part.back() - 0.05 if y is None else y
+    z = part.z if z is None else z
+    width = max(0.0, part.hw(part.back()) * 2.0 * 0.9 - r * 2.6)
+    rows = 1 if n <= 4 or width >= (n - 1) * r * 2.6 else 2
+    per = math.ceil(n / rows)
+    for row in range(rows):
+        m = per if row < rows - 1 else n - per * (rows - 1)
+        zz = z + (0.0 if rows == 1 else (row - 0.5) * r * 2.7)
+        span = min(width, (m - 1) * r * 2.7)
+        for i in range(m):
+            x = 0.0 if m == 1 else -span / 2 + span * i / (m - 1)
+            k.engine(x, y, zz, r)
+
+
+def spread(k, part, n, s, y0, y1, face):
+    """n turret mounts in a line along `part` between y0 and y1 on one face (top, bottom, left, right)."""
+    for j in range(n):
+        y = y0 + (y1 - y0) * ((j + 0.5) / n)
+        if face == "top":
+            k.mount(part.x, y, part.top(y), "top", s)
+        elif face == "bottom":
+            k.mount(part.x, y, part.bottom(y), "bottom", s)
+        else:
+            sx = 1 if face == "right" else -1
+            k.mount(part.side_x(sx, y), y, part.z, face, s)
+
+
+def g_dart(k, L, W, H, ne, er, guns, s, ex):
+    """A fighter dart: a needle fuselage, swept wings with an accent edge, a tail fin, turrets on the spine
+    and keel and (with more than two) out on the wings."""
+    fw = max(1.2, W * 0.22)
+    fus = k.hull_part("fuselage", fw, L, H, taper=(0.3, 0.55), chamfer=H * 0.18)
+    k.cockpit(fus, L * 0.2, fw * 0.55, L * 0.18, H * 0.45)
+    span = W / 2
+    t = max(0.12, H * 0.14)
+    v = ex.get("v", 0)
+    for sx in (-1, 1):
+        if v == 1:  # a pure delta from mid-body to the tail
+            k.plate("delta", [(sx * fw * 0.4, L * 0.14), (sx * span, -L * 0.42), (sx * span * 0.9, -L * 0.47), (sx * fw * 0.4, -L * 0.47)],
+                    t, -H * 0.1)
+            k.plate("delta_edge", [(sx * span * 0.62, -L * 0.2), (sx * span, -L * 0.42), (sx * span * 0.96, -L * 0.44),
+                                   (sx * span * 0.58, -L * 0.23)], t * 1.2, -H * 0.1, mat_=k.acc)
+        elif v == 2:  # cranked: a broad glove near the body, a thin swept outer panel
+            k.plate("glove", [(sx * fw * 0.4, L * 0.1), (sx * span * 0.5, -L * 0.22), (sx * span * 0.5, -L * 0.4), (sx * fw * 0.4, -L * 0.42)],
+                    t * 1.2, -H * 0.1)
+            k.plate("outer_wing", [(sx * span * 0.48, -L * 0.2), (sx * span, -L * 0.44), (sx * span, -L * 0.5), (sx * span * 0.48, -L * 0.4)],
+                    t, -H * 0.1, mat_=k.acc)
+        elif v == 3:  # swept far back, with a twin tail
+            k.plate("wing", [(sx * fw * 0.4, -L * 0.08), (sx * span, -L * 0.46), (sx * span, -L * 0.52), (sx * fw * 0.4, -L * 0.38)], t,
+                    -H * 0.1)
+            k.plate("wing_edge", [(sx * span * 0.7, -L * 0.33), (sx * span, -L * 0.46), (sx * span, -L * 0.49), (sx * span * 0.7, -L * 0.36)],
+                    t * 1.2, -H * 0.1, mat_=k.acc)
+            k.plate("tail_fin", [(-L * 0.24, H * 0.3), (-L * 0.44, H * 0.3), (-L * 0.5, H * 0.3 + L * 0.14), (-L * 0.4, H * 0.3 + L * 0.14)],
+                    max(0.08, H * 0.07), 0.0, plane="yz", x=sx * fw * 0.45, rot=(0, sx * 0.35, 0), mat_=k.acc)
+        elif v == 4:  # a blended flying wing: the body flares out into it
+            k.plate("blend", [(sx * fw * 0.3, L * 0.3), (sx * span * 0.55, -L * 0.05), (sx * span, -L * 0.36), (sx * span * 0.85, -L * 0.46),
+                              (sx * fw * 0.3, -L * 0.42)], t * 1.4, -H * 0.05)
+            k.plate("blend_edge", [(sx * span * 0.55, -L * 0.05), (sx * span, -L * 0.36), (sx * span * 0.97, -L * 0.38),
+                                   (sx * span * 0.52, -L * 0.08)], t * 1.6, -H * 0.05, mat_=k.acc)
+        else:
+            k.plate("wing", [(sx * fw * 0.4, -L * 0.02), (sx * span, -L * 0.36), (sx * span, -L * 0.45), (sx * fw * 0.4, -L * 0.42)], t,
+                    -H * 0.1)
+            k.plate("wing_edge", [(sx * span * 0.55, -L * 0.22), (sx * span, -L * 0.36), (sx * span, -L * 0.39),
+                                  (sx * span * 0.55, -L * 0.25)], t * 1.2, -H * 0.1, mat_=k.acc)
+        if v in (0, 2):
+            k.plate("canard", [(sx * fw * 0.35, L * 0.32), (sx * fw * 1.3, L * 0.24), (sx * fw * 1.3, L * 0.2), (sx * fw * 0.35, L * 0.24)],
+                    t * 0.6, 0.0)
+    if v != 3:
+        k.plate("fin", [(-L * 0.2, H * 0.35), (-L * 0.42, H * 0.35), (-L * 0.47, H * 0.35 + L * 0.16), (-L * 0.36, H * 0.35 + L * 0.16)],
+                max(0.08, H * 0.08), plane="yz")
+    engines(k, fus, ne, er)
+    wing = 0 if guns <= 2 else (4 if guns >= 8 else 2)
+    top = (guns - wing + 1) // 2
+    bottom = guns - wing - top
+    spread(k, fus, top, s, -L * 0.3, L * 0.05, "top")
+    spread(k, fus, bottom, s, -L * 0.25, L * 0.2, "bottom")
+    wz = -H * (0.05 if v == 4 else 0.1)  # the wing's middle and half-thickness, for turrets on it
+    wt = t * (1.4 if v == 4 else (1.2 if v == 2 else 1.0)) * 0.6
+    for i in range(wing):
+        sx = 1 if i % 2 == 0 else -1
+        y = -L * (0.3 if i < 2 else 0.24) - (L * 0.08 if v == 3 else 0.0)
+        if i < 2:
+            k.mount(sx * span * 0.66, y, wz + wt, "top", s)
+        else:
+            k.mount(sx * span * 0.66, y, wz - wt, "bottom", s)
+    k.lights(span, -L * 0.42, -H * 0.1, 0.06 + L * 0.004)
+    k.belly(fus, -L * 0.2, L * 0.2, int(4 + L * 0.6), 0.1 + L * 0.03)
+
+
+def g_wedge(k, L, W, H, ne, er, guns, s, ex):
+    """An armoured arrowhead: a broad delta hull, a raised spine, wing extensions and (unless it's a stealth
+    ship) canted twin fins."""
+    hb = k.hull_part("hull", W * 0.62, L, H, taper=(0.2, 0.55), chamfer=H * 0.16)
+    spine = k.part("spine", max(0.8, W * 0.15), L * 0.72, H * 0.4, y=-L * 0.06, z=hb.top(-L * 0.06) + H * 0.12, taper=(0.5, 0.6),
+                   mats=k.A)
+    box("canopy", (W * 0.08 + 0.3, L * 0.18, H * 0.25), (0, L * 0.24, spine.top(L * 0.24) + H * 0.05), k.glass, 0.03,
+        taper=(0.5, 0.6), parent=k.body)
+    t = max(0.14, H * 0.13)
+    v = ex.get("v", 0)
+    for sx in (-1, 1):
+        k.plate("wing", [(sx * W * 0.24, -L * 0.1), (sx * W / 2, -L * 0.42), (sx * W / 2, -L * 0.5), (sx * W * 0.24, -L * 0.48)], t,
+                -H * 0.18)
+        k.plate("wing_stripe", [(sx * W * 0.38, -L * 0.27), (sx * W / 2, -L * 0.42), (sx * W / 2, -L * 0.45),
+                                (sx * W * 0.38, -L * 0.3)], t * 1.2, -H * 0.18, mat_=k.acc)
+        if v == 1:  # canards up front and a high T-tail instead of the canted fins
+            k.plate("canard", [(sx * W * 0.08, L * 0.3), (sx * W * 0.3, L * 0.18), (sx * W * 0.3, L * 0.12), (sx * W * 0.08, L * 0.18)],
+                    t * 0.7, H * 0.1, mat_=k.acc)
+        elif v == 2:  # twin outer hulls riding along the wing
+            side = k.part("side_hull", W * 0.12, L * 0.62, H * 0.75, x=sx * W * 0.33, y=-L * 0.16, taper=(0.4, 0.6), mats=k.A,
+                          chamfer=H * 0.1)
+            k.engine(side.x, side.back() - 0.05, 0, er * 0.8)
+        elif v == 4:  # a sawtooth trailing edge, all angles
+            k.plate("sawtooth", [(sx * W * 0.24, -L * 0.48), (sx * W * 0.32, -L * 0.58), (sx * W * 0.38, -L * 0.48), (sx * W * 0.44, -L * 0.57),
+                                 (sx * W * 0.5, -L * 0.5)], t, -H * 0.18)
+        if not ex.get("stealth") and v != 1:
+            k.plate("fin", [(-L * 0.28, 0.0), (-L * 0.46, 0.0), (-L * 0.5, L * 0.18), (-L * 0.42, L * 0.18)], max(0.08, H * 0.07), 0.0,
+                    plane="yz", x=sx * W * 0.18, rot=(0, sx * 0.4, 0))
+    if v == 1:
+        k.plate("t_fin", [(-L * 0.26, H * 0.3), (-L * 0.46, H * 0.3), (-L * 0.5, H * 0.3 + L * 0.2), (-L * 0.4, H * 0.3 + L * 0.2)],
+                max(0.08, H * 0.07), plane="yz")
+        k.plate("t_plane", [(-W * 0.25, -L * 0.37), (W * 0.25, -L * 0.37), (W * 0.25, -L * 0.45), (-W * 0.25, -L * 0.45)], t * 0.7,
+                H * 0.3 + L * 0.2, mat_=k.acc)
+    engines(k, hb, ne, er, z=-H * 0.05)
+    top = min(2, max(1, guns // 2))
+    bottom = min(2, guns - top)
+    spread(k, spine, top, s, -L * 0.3, L * 0.06, "top")
+    spread(k, hb, bottom, s, -L * 0.25, L * 0.15, "bottom")
+    rest = guns - top - bottom
+    for i in range(rest):
+        sx = 1 if i % 2 == 0 else -1
+        k.mount(sx * W * 0.38, -L * 0.36, -H * 0.18 + t * 0.6, "top", s * 0.9)
+    k.lights(W / 2, -L * 0.48, -H * 0.18, 0.06 + L * 0.004)
+    k.belly(hb, -L * 0.3, L * 0.2, int(6 + L * 0.6), 0.1 + L * 0.03)
+
+
+def g_block(k, L, W, H, ne, er, guns, s, ex):
+    """A hauler: a cab up front, a spine stacked with cargo containers, a heavy engine block. Turrets on the
+    cab and the engine block."""
+    k.main = Part(W, L, H)
+    cab = k.part("cab", W * 0.85, L * 0.22, H * 0.92, y=L * 0.39, z=H * 0.04, taper=(0.86, 0.8), chamfer=H * 0.12)
+    k.glass_band(cab, cab.front() + 0.02, H * 0.3, W * 0.6, H * 0.16)
+    k.part("spine", W * 0.22, L * 0.62, H * 0.3, y=-L * 0.03, mats=k.G)
+    rows = 3 if L < 14 else 4
+    cl = L * 0.6 / rows
+    v = ex.get("v", 0)
+    if v == 1:  # a tanker: rows of pressure tanks instead of containers
+        for i in range(rows):
+            y = L * 0.24 - cl * (i + 0.5)
+            for x in (-W * 0.24, W * 0.24):
+                c = (x, y, 0.0)
+                along_y(min(W * 0.22, H * 0.45), cl * 0.9, c, k.hull2 if i % 2 else k.acc2, parent=k.body, segs=18)
+                along_y(min(W * 0.23, H * 0.47), cl * 0.08, c, k.dark, parent=k.body, segs=18)
+                k.grow(c, (W * 0.23, cl * 0.45, H * 0.47))
+            box("tank_walk", (W * 0.1, cl * 0.8, 0.06), (0, y, H * 0.3), k.gunm, 0.0, parent=k.body)
+    elif v == 2:  # an enclosed freighter hull, cargo doors down its flanks and a raised bridge
+        hold = k.part("hold", W * 0.9, L * 0.6, H * 0.9, y=-L * 0.03, mats=k.D, chamfer=H * 0.1)
+        for i in range(rows):
+            y = L * 0.24 - cl * (i + 0.5)
+            for sx in (-1, 1):
+                box("cargo_door", (0.08, cl * 0.75, H * 0.6), (hold.side_x(sx, y) + sx * 0.03, y, 0), k.acc, 0.0, parent=k.body)
+        br = k.part("bridge_tower", W * 0.35, L * 0.08, H * 0.5, y=-L * 0.28, z=hold.top(-L * 0.28) + H * 0.22, taper=(0.9, 0.9))
+        k.glass_band(br, br.front() + 0.02, br.z + H * 0.08, br.w * 0.8, H * 0.12)
+    else:  # containers: two wide and two high, or (v 3) three by three round the spine
+        cols = (-W * 0.3, 0.0, W * 0.3) if v == 3 else (-W * 0.26, W * 0.26)
+        layers = (H * 0.32, 0.0, -H * 0.32) if v == 3 else (H * 0.25, -H * 0.25)
+        cw = W * (0.29 if v == 3 else 0.46)
+        ch = H * (0.3 if v == 3 else 0.46)
+        for i in range(rows):
+            y = L * 0.24 - cl * (i + 0.5)
+            for x in cols:
+                for z in layers:
+                    if (x, z) != (0.0, 0.0) and k.rng.random() < 0.88:
+                        k.container(x, y, z, cw, cl * 0.92, ch)
+    eb = k.part("engine_block", W * 0.92, L * 0.17, H, y=-L * 0.42, mats=k.D, chamfer=H * 0.1)
+    engines(k, eb, ne, er)
+    faces = [(cab, "top"), (eb, "bottom"), (eb, "top"), (cab, "bottom")]
+    for i in range(guns):
+        part, face = faces[i % 4]
+        y = part.y + (0.0 if i < 4 else part.l * 0.3)
+        k.mount(0, y, part.top(y) if face == "top" else part.bottom(y), face, s)
+    k.lights(W * 0.45, cab.y, H * 0.2, 0.08 + L * 0.004)
+    k.beacon(0, eb.y - eb.l * 0.3, eb.top(eb.y) + 0.12, 0.1)
+    k.deck(eb, eb.back() + 0.2, eb.y - 0.2, int(6 + L * 0.3), 0.15 + L * 0.02)
+
+
+def g_twin(k, L, W, H, ne, er, guns, s, ex):
+    """Twin booms joined by a wing, a cockpit pod between them and a high tailplane. Turrets on sponsons out
+    on the booms and on the pod."""
+    pod = k.hull_part("pod", max(1.2, W * 0.2), L * 0.75, H, y=L * 0.1, taper=(0.45, 0.6), chamfer=H * 0.2)
+    box("canopy", (W * 0.1 + 0.3, L * 0.22, H * 0.3), (0, L * 0.25, pod.top(L * 0.25) + H * 0.05), k.glass, 0.04, taper=(0.5, 0.6),
+        parent=k.body)
+    bx = W * 0.4
+    k.plate("wing", [(-bx, L * 0.06), (bx, L * 0.06), (bx, -L * 0.18), (-bx, -L * 0.18)], max(0.14, H * 0.16), 0.0)
+    k.plate("tailplane", [(-bx * 1.03, -L * 0.42), (bx * 1.03, -L * 0.42), (bx * 1.03, -L * 0.5), (-bx * 1.03, -L * 0.5)],
+            max(0.08, H * 0.09), H * 1.2)
+    for sx in (-1, 1):
+        boom = k.part("boom", max(0.7, W * 0.13), L, H * 0.8, x=sx * bx, taper=(0.55, 0.55), chamfer=H * 0.12)
+        box("boom_stripe", (boom.w * 1.04, L * 0.07, H * 0.84), (boom.x, -L * 0.28, 0), k.acc, 0.0, parent=k.body)
+        for e in range(max(1, ne // 2)):
+            k.engine(boom.x + (0 if ne < 4 else (e - 0.5) * er * 2.4), boom.back() - 0.05, 0, er)
+        k.plate("fin", [(-L * 0.35, H * 0.4), (-L * 0.5, H * 0.4), (-L * 0.52, H * 1.25), (-L * 0.44, H * 1.25)], 0.08, sx * bx,
+                plane="yz")
+        sp = k.part("sponson", max(0.5, W * 0.06), L * 0.18, H * 0.7, x=sx * (bx + boom.hw(L * 0.15) + W * 0.03), y=L * 0.15, mats=k.A)
+        k.mount(sp.side_x(sx, L * 0.15), L * 0.15, 0, side(sx), s)
+    rest = guns - 2
+    spread(k, pod, (rest + 1) // 2, s, -L * 0.2, L * 0.1, "top")
+    spread(k, pod, rest // 2, s, -L * 0.15, L * 0.25, "bottom")
+    k.lights(bx, L * 0.4, 0.0, 0.06 + L * 0.004)
+
+
+def g_spine(k, L, W, H, ne, er, guns, s, ex):
+    """An explorer: a long spine with a sensor prow, pods along it and (often) a slowly turning ring round
+    its waist. Turrets alternate above and below the spine."""
+    hb = k.hull_part("spine", max(1.4, W * 0.36), L, H * 0.62, taper=(0.62, 0.68), chamfer=H * 0.12)
+    v = ex.get("v", 0)
+    if v == 1:  # a big sensor bulb on the bow
+        ico("sensor_bulb", hb.w * 0.7, (0, hb.front() + hb.w * 0.4, 0), k.glass, 2, parent=k.body, smooth=True)
+        torus("bulb_ring", hb.w * 0.66, hb.w * 0.06, (0, hb.front() + hb.w * 0.4, 0), k.acc, rot=(math.radians(90), 0, 0), parent=k.body,
+              seg=32, ring=6)
+        k.grow((0, hb.front() + hb.w * 0.4, 0), (hb.w * 0.7, hb.w * 0.7, hb.w * 0.7))
+    else:
+        along_y(hb.w * 0.28, L * 0.18, (0, hb.front() + L * 0.08, 0), k.gunm, parent=k.body, segs=12, r2=hb.w * 0.06)
+        k.grow((0, hb.front() + L * 0.08, 0), (hb.w * 0.3, L * 0.09, hb.w * 0.3))
+    k.cockpit(hb, L * 0.3, hb.w * 0.55, L * 0.14, H * 0.3)
+    for c in range(3):
+        y = L * (0.12 - c * 0.17)
+        for sx in (-1, 1):
+            if v == 2:  # boxy instrument pods on struts
+                k.part("pod", hb.w * 0.5, L * 0.1, hb.w * 0.4, x=sx * (hb.hw(y) + hb.w * 0.45), y=y, mats=k.D if c % 2 else k.A, chamfer=0.05)
+                k.part("pod_strut", hb.w * 0.4, L * 0.03, hb.w * 0.1, x=sx * (hb.hw(y) + hb.w * 0.12), y=y, mats=k.G)
+            else:
+                along_y(hb.w * 0.32, L * 0.12, (sx * (hb.hw(y) + hb.w * 0.3), y, 0), k.hull2 if c % 2 else k.acc, parent=k.body, segs=10)
+                k.grow((sx * (hb.hw(y) + hb.w * 0.3), y, 0), (hb.w * 0.32, L * 0.06, hb.w * 0.32))
+    if ex.get("ring"):
+        rr = max(W * 0.5, hb.w * 1.6)
+        ring = root("ring")
+        ring.parent = k.r
+        ring.location = (0, -L * 0.18, 0)
+        torus("ring", rr, rr * 0.08, (0, 0, 0), k.hull2, rot=(math.radians(90), 0, 0), parent=ring, seg=48, ring=10)
+        for i in range(4):
+            a = i * math.pi / 2 + math.pi / 4
+            box("spoke", (rr * 0.7, rr * 0.08, rr * 0.08), (math.cos(a) * rr * 0.62, 0, math.sin(a) * rr * 0.62), k.dark, 0.0,
+                rot=(0, -a, 0), parent=ring)
+            box("ring_pod", (rr * 0.25, rr * 0.25, rr * 0.2), (math.cos(a) * rr, 0, math.sin(a) * rr), k.acc, 0.05, rot=(0, -a, 0),
+                parent=ring)
+        merge(ring, "ring_mesh").parent = ring
+        spin(ring, "Y", 600)
+        k.grow((0, -L * 0.18, 0), (rr * 1.1, rr * 0.15, rr * 1.1))
+    engines(k, hb, ne, er)
+    spread(k, hb, (guns + 1) // 2, s, -L * 0.42, L * 0.2, "top")
+    spread(k, hb, guns // 2, s, -L * 0.36, L * 0.3, "bottom")
+    k.lights(hb.hw(-L * 0.3) + 0.2, -L * 0.3, 0.0, 0.06 + L * 0.003)
+    k.flanks(hb, int(6 + L * 0.4), 0.1 + L * 0.02)
+
+
+def g_miner(k, L, W, H, ne, er, guns, s, ex):
+    """A mining barge: a wide low hull carrying an ore hopper, two arms reaching forward with claws and a
+    drill between them. Turrets on the arms and the hull."""
+    hb = k.hull_part("hull", W * 0.62, L * 0.62, H, y=-L * 0.1, taper=(0.86, 0.9), chamfer=H * 0.12)
+    top = hb.top(hb.y)
+    hw, hl = hb.w * 0.32, hb.l * 0.27
+    v = ex.get("v", 0)
+    rx = (math.radians(90), 0, 0)
+    rock = mat("ore_rock", "4a4038", 0.1, 0.9)
+    if v in (0, 2):  # an open ore hopper on the deck
+        for sx in (-1, 1):
+            k.part("hopper_wall", hb.w * 0.05, hl * 2, H * 0.5, x=sx * hw, y=hb.y, z=top + H * 0.22, mats=k.A)
+            k.part("hopper_wall", hw * 2 + hb.w * 0.05, hb.w * 0.05, H * 0.5, y=hb.y + sx * hl, z=top + H * 0.22, mats=k.A)
+        for i in range(9):
+            ico("ore", k.rng.uniform(0.12, 0.2) * hw * 2, (k.rng.uniform(-hw, hw) * 0.75, hb.y + k.rng.uniform(-hl, hl) * 0.75,
+                                                          top + H * 0.15), rock, 1, parent=k.body)
+    elif v == 1:  # two long ore tanks on the deck
+        for sx in (-1, 1):
+            c = (sx * hw * 0.7, hb.y, top + H * 0.32)
+            along_y(H * 0.34, hl * 2.4, c, k.hull2, parent=k.body, segs=18)
+            for j in range(3):
+                along_y(H * 0.36, hl * 0.12, (c[0], hb.y + (j - 1) * hl * 0.8, c[2]), k.acc, parent=k.body, segs=18)
+            k.grow(c, (H * 0.36, hl * 1.2, H * 0.36))
+    elif v == 3:  # a great ore silo under a gantry
+        ico("ore_silo", hw * 1.05, (0, hb.y, top + hw * 0.7), k.hull2, 2, parent=k.body, smooth=True)
+        torus("silo_band", hw * 1.0, hw * 0.06, (0, hb.y, top + hw * 0.7), k.acc, parent=k.body, seg=40, ring=8)
+        for sx in (-1, 1):
+            box("gantry_leg", (hw * 0.12, hw * 0.12, hw * 1.9), (sx * hw * 1.15, hb.y, top + hw * 0.95), k.gunm, 0.0, parent=k.body)
+        box("gantry_beam", (hw * 2.5, hw * 0.16, hw * 0.16), (0, hb.y, top + hw * 1.9), k.gunm, 0.0, parent=k.body)
+        k.grow((0, hb.y, top + hw), (hw * 1.3, hw * 1.1, hw * 1.0))
+    else:  # a smelter: furnace towers and smokestacks glowing on the deck
+        hot = mat("forge_glow", "ff8a3d", 0.0, 0.4, emit=2.5)
+        for j, sx in enumerate((-1, 0, 1)):
+            h = H * (1.3 + 0.35 * (j % 2))
+            twr = k.part("furnace", hw * 0.5, hl * 0.6, h, x=sx * hw * 0.7, y=hb.y, z=top + h / 2, mats=k.D, chamfer=hw * 0.05)
+            box("furnace_glow", (hw * 0.52, 0.06, h * 0.25), (twr.x, twr.front() + 0.02, twr.z), hot, 0.0, parent=k.body)
+            cyl("stack", hw * 0.1, h * 0.6, (twr.x, hb.y - hl * 0.15, twr.top(hb.y) + h * 0.3), k.dark, parent=k.body, segs=12)
+            ico("stack_glow", hw * 0.1, (twr.x, hb.y - hl * 0.15, twr.top(hb.y) + h * 0.6), hot, 1, parent=k.body)
+            k.grow((twr.x, hb.y, twr.top(hb.y) + h * 0.3), (hw * 0.12, hw * 0.12, h * 0.3))
+    if v == 1:
+        # no arms: a ring of mining lasers round the bow, turrets on the tanks
+        R = max(hb.hw(hb.front()), hb.hh(hb.front())) * 1.25
+        torus("laser_ring", R, R * 0.09, (0, hb.front() + L * 0.03, 0), k.gunm, rot=rx, parent=k.body, seg=40, ring=8)
+        for a in range(8):
+            ang = a * math.pi / 4
+            box("ring_emitter", (R * 0.18, R * 0.3, R * 0.18), (math.cos(ang) * R, hb.front() + L * 0.05, math.sin(ang) * R), k.acc,
+                0.02, parent=k.body)
+            ico("emitter_lens", R * 0.07, (math.cos(ang) * R, hb.front() + L * 0.09, math.sin(ang) * R), k.win, 1, parent=k.body)
+        k.grow((0, hb.front() + L * 0.05, 0), (R * 1.1, L * 0.06, R * 1.1))
+        for sx in (-1, 1):
+            k.mount(sx * hw * 0.7, hb.y + hl * 0.5, top + H * 0.66, "top", s)
+    else:
+        ax = W * 0.38
+        for sx in (-1, 1):
+            k.part("shoulder", W * 0.22, W * 0.22, H * 0.8, x=sx * ax, y=hb.front() - W * 0.05, mats=k.A)
+            for lower in ((False, True) if v == 2 else (False,)):
+                az = -H * 0.55 if lower else 0.0
+                arm = k.part("arm", W * 0.14, L * (0.3 if lower else 0.36), H * 0.5, x=sx * ax * (0.8 if lower else 1.0),
+                             y=hb.front() + L * (0.14 if lower else 0.17), z=az, mats=k.G, taper=(0.8, 0.8))
+                for c in (-1, 0, 1):
+                    box("claw", (arm.w * 0.25, L * 0.12, arm.h * 0.4), (arm.x + c * arm.w * 0.33, arm.front() + L * 0.05,
+                                                                       az + abs(c) * arm.h * 0.1),
+                        k.dark, 0.02, taper=(0.3, 0.5), rot=(0, 0, -sx * 0.25 + c * 0.2), parent=k.body)
+                k.grow((arm.x, arm.front() + L * 0.05, az), (arm.w, L * 0.07, arm.h))
+                if not lower:
+                    k.mount(arm.x, arm.y - arm.l * 0.15, arm.top(arm.y), "top", s)
+        reach = 0.32 if v == 2 else 0.2  # (the four-armed digger carries a longer drill)
+        k.part("drill_housing", W * 0.25, L * 0.1, H * 0.7, y=hb.front() + L * 0.04, z=-H * 0.1, mats=k.G)
+        along_y(W * 0.1, L * reach, (0, hb.front() + L * (0.08 + reach / 2), -H * 0.1), k.gunm, parent=k.body, segs=16, r2=W * 0.006)
+        for c in range(4):
+            torus("drill_thread", W * (0.085 - c * 0.018), W * 0.008, (0, hb.front() + L * (0.11 + c * reach / 5), -H * 0.1), k.dark,
+                  rot=rx, parent=k.body, seg=16, ring=4)
+        k.grow((0, hb.front() + L * (0.08 + reach / 2), 0), (W * 0.1, L * reach / 2, W * 0.1))
+    br = k.part("bridge", W * 0.24, L * 0.14, H * 0.6, x=-W * 0.2, y=hb.back() + L * 0.1, z=hb.top(hb.back()) + H * 0.28, taper=(0.9, 0.85))
+    k.glass_band(br, br.front() + 0.02, br.z + H * 0.08, br.w * 0.8, H * 0.16)
+    k.radar(W * 0.2, hb.back() + L * 0.1, hb.top(hb.back()), 0.4 + L * 0.04)
+    engines(k, hb, ne, er)
+    rest = guns - 2
+    spread(k, hb, (rest + 1) // 2, s, hb.back() + hb.l * 0.05, hb.front() - hb.l * 0.05, "bottom")
+    for i in range(rest // 2):
+        sx = 1 if i % 2 == 0 else -1
+        k.mount(hb.side_x(sx, hb.y), hb.y - i * hb.l * 0.15, 0, side(sx), s)
+    k.lights(W * 0.31, hb.y, H * 0.2, 0.06 + L * 0.004)
+    k.belly(hb, hb.back() + 0.3, hb.front() - 0.3, int(8 + L * 0.4), 0.15 + L * 0.025)
+
+
+def g_cruiser(k, L, W, H, ne, er, guns, s, ex):
+    """A warship: a dagger hull with a spinal ridge, a stepped citadel and bridge tower, armour on the flanks.
+    Turrets along the ridge and the keel, behind the citadel and (on the big ones) out on the flanks."""
+    v = ex.get("v", 0)
+    # v1: twin bridge towers; v2: a slab-sided brick with a second tier; v3: a long narrow needle
+    taper = {2: (0.85, 0.9), 3: (0.3, 0.6)}.get(v, (0.45, 0.72))
+    hb = k.hull_part("hull", W * (0.75 if v == 3 else 1.0), L, H, taper=taper, chamfer=H * 0.17)
+    ridge = k.part("ridge", W * 0.2, L * (0.72 if v == 3 else 0.6), H * 0.34, y=L * 0.06, z=hb.top(L * 0.06) + H * 0.13, taper=(0.6, 0.7),
+                   mats=k.A)
+    cit = k.part("citadel", W * 0.48, L * 0.24, H * 0.5, y=-L * 0.18, z=hb.top(-L * 0.18) + H * 0.22, taper=(0.85, 0.9))
+    if v == 2:
+        cit = k.part("upper_citadel", W * 0.36, L * 0.16, H * 0.45, y=-L * 0.2, z=cit.top(-L * 0.2) + H * 0.2, taper=(0.85, 0.9), mats=k.A)
+    for tx in ((-W * 0.13, W * 0.13) if v == 1 else (0.0,)):
+        tw = k.part("tower", W * (0.14 if v == 1 else 0.2), L * 0.075, H * (0.75 if v == 1 else 0.55), x=tx, y=-L * 0.21,
+                    z=cit.top(-L * 0.21) + H * (0.35 if v == 1 else 0.25), taper=(0.85, 0.85))
+        k.glass_band(tw, tw.front() + 0.02, tw.z + H * 0.1, tw.w * 0.8, H * 0.08)
+    k.mast(tw.x + tw.w * 0.25, tw.y - tw.l * 0.2, tw.top(tw.y), L * 0.08, 0.04 + L * 0.0025)
+    k.radar(tw.x - tw.w * 0.25, tw.y - tw.l * 0.2, tw.top(tw.y), 0.4 + L * 0.025)
+    for sx in (-1, 1):
+        k.part("flank_armor", W * 0.08, L * 0.5, H * 0.75, x=sx * (hb.hw(-L * 0.05) + W * 0.02), y=-L * 0.05, mats=k.A,
+               rot=(0, sx * 0.3, -sx * math.atan(hb.slope)))
+    k.portholes(hb, -L * 0.05, H * 0.12, L * 0.55, 3 if L > 30 else 2, 0.25 + L * 0.008)
+    engines(k, hb, ne, er)
+    sides = 2 if guns >= 8 else 0
+    top_ridge = min(3 if guns >= 10 else 2, max(1, (guns - sides) // 2 - 1))
+    top_back = max(0, (guns - sides) // 2 - top_ridge)
+    bottom = guns - sides - top_ridge - top_back
+    spread(k, ridge, top_ridge, s, ridge.y - ridge.l * 0.05, ridge.front() - ridge.l * 0.08, "top")
+    spread(k, hb, top_back, s, hb.back() + L * 0.03, cit.back() - L * 0.02, "top")
+    spread(k, hb, bottom, s, -L * 0.4, L * 0.38, "bottom")
+    for sx in ((-1, 1) if sides else ()):
+        k.mount(hb.side_x(sx, L * 0.15) + sx * 0.1, L * 0.15, 0, side(sx), s)
+    k.lights(hb.hw(L * 0.2) + 0.2, L * 0.2, H * 0.1, 0.08 + L * 0.004)
+    k.beacon(0, hb.back() + L * 0.05, hb.top(hb.back()) + 0.3, 0.08 + L * 0.003)
+    k.deck(hb, ridge.front() + L * 0.01, hb.front() - L * 0.02, int(6 + L * 0.2), 0.2 + L * 0.02)
+    k.belly(hb, -L * 0.4, L * 0.4, int(10 + L * 0.4), 0.2 + L * 0.022)
+
+
+def g_carrier(k, L, W, H, ne, er, guns, s, ex):
+    """A carrier: a broad flat hull under a flight deck with runway lights, a hangar mouth in the bow and an
+    island tower. Turrets on sponsons down both flanks and under the keel."""
+    hb = k.hull_part("hull", W * 0.8, L, H * 0.55, taper=(0.82, 0.9), chamfer=H * 0.08)
+    fd = k.part("flight_deck", W * 0.66, L * 0.9, H * 0.05, y=L * 0.02, z=hb.top(L * 0.02) + H * 0.03, mats=[k.deckm, k.seam, k.hull2],
+                chamfer=0.1)
+    dz = fd.top(0)
+    for i in range(10):
+        y = L * 0.4 - i * L * 0.085
+        box("runway_stripe", (W * 0.02, L * 0.045, 0.06), (0, y, dz + 0.02), k.acc, 0.0, parent=k.body)
+        for sx in (-1, 1):
+            ico("runway_light", 0.06 + L * 0.0015, (sx * W * 0.26, y, dz + 0.06), k.amber, 1, parent=k.body)
+    box("hangar_mouth", (W * 0.55, 0.4, H * 0.3), (0, hb.front() + 0.05, 0.0), k.dark, 0.0, parent=k.body)
+    box("hangar_glow", (W * 0.5, 0.2, H * 0.03), (0, hb.front() + 0.18, H * 0.12), k.win, 0.0, parent=k.body)
+    isl = k.part("island", W * 0.12, L * 0.18, H * 0.6, x=W * 0.3, y=-L * 0.1, z=dz + H * 0.3, taper=(0.9, 0.9))
+    up = k.part("island_bridge", W * 0.1, L * 0.08, H * 0.25, x=W * 0.3, y=-L * 0.07, z=isl.top(-L * 0.07) + H * 0.12)
+    k.glass_band(up, up.front() + 0.02, up.z + H * 0.03, up.w * 0.8, H * 0.07)
+    k.mast(W * 0.32, -L * 0.12, up.top(-L * 0.12), L * 0.08, 0.04 + L * 0.002)
+    k.radar(W * 0.27, -L * 0.13, up.top(-L * 0.13), 0.5 + L * 0.02)
+    engines(k, hb, ne, er)
+    bottom = max(2, guns // 3)
+    sides = guns - bottom
+    per = sides // 2
+    for sx in (-1, 1):
+        n = per + (1 if sx > 0 and sides % 2 else 0)
+        for j in range(n):
+            y = L * 0.38 - L * 0.76 * (j + 0.5) / n
+            sp = k.part("sponson", W * 0.07, L * 0.08, H * 0.35, x=sx * (hb.hw(y) + W * 0.03), y=y, mats=k.A, chamfer=0.2)
+            k.mount(sp.side_x(sx, y), y, 0, side(sx), s)
+    spread(k, hb, bottom, s, -L * 0.4, L * 0.4, "bottom")
+    k.lights(W * 0.42, -L * 0.3, H * 0.1, 0.08 + L * 0.003)
+    k.portholes(hb, 0.0, 0.0, L * 0.7, 3, 0.25 + L * 0.008)
+    k.belly(hb, -L * 0.45, L * 0.45, int(12 + L * 0.3), 0.2 + L * 0.02)
+
+
+def g_saucer(k, L, W, H, ne, er, guns, s, ex):
+    """A guardian: a squat octagonal fortress inside a shield-emitter ring, with a domed command deck.
+    Turrets on armoured sponsons out on the flanks, and on the deck and keel."""
+    R = W * 0.38
+    v = ex.get("v", 0)
+    sides = 6 if v == 1 else 8
+    k.main = hb = Part(R * 1.85, R * 1.85, H)
+    cyl("hull_core", R, H, (0, 0, 0), k.hull, rot=(0, 0, math.pi / sides), parent=k.body, segs=sides)
+    k.grow((0, 0, 0), (R, R, H / 2))
+    k.part("deck_plate", R * 1.4, R * 1.4, H * 0.25, z=H * 0.55, chamfer=H * 0.15)
+    k.part("belly_plate", R * 1.2, R * 1.2, H * 0.2, z=-H * 0.52, chamfer=H * 0.12)
+    for i in range(sides):
+        a = i * 2 * math.pi / sides + math.pi / sides
+        k.part("rim_armor", R * (0.95 if v == 1 else 0.7), R * 0.12, H * 0.8, x=math.cos(a) * R * 0.96, y=math.sin(a) * R * 0.96,
+               rot=(0, 0, a + math.pi / 2), mats=k.A)
+    if v == 2:  # a tiered tower rising off the deck, with a spire
+        z = H * 0.67
+        for j, (rr, hh) in enumerate(((R * 0.4, H * 0.9), (R * 0.28, H * 0.7))):
+            cyl("tier", rr, hh, (0, 0, z + hh / 2), k.hull2 if j % 2 else k.hull, parent=k.body, segs=8, r2=rr * 0.85)
+            torus("tier_band", rr * 0.95, rr * 0.06, (0, 0, z + hh * 0.7), k.acc, parent=k.body, seg=24, ring=6)
+            z += hh
+        cyl("spire", R * 0.04, H * 1.2, (0, 0, z + H * 0.6), k.dark, parent=k.body, segs=8, r2=R * 0.01)
+        ico("spire_light", R * 0.05, (0, 0, z + H * 1.2), k.navr, 1, parent=k.body)
+        k.grow((0, 0, z / 2 + H * 0.6), (R * 0.4, R * 0.4, z / 2 + H * 0.6))
+    elif v == 1:  # a low command bridge across the deck instead of a dome
+        br = k.part("command_bridge", R * 0.9, R * 0.35, H * 0.35, y=-R * 0.05, z=H * 0.85, taper=(0.8, 0.8))
+        k.glass_band(br, br.front() + 0.02, br.z, br.w * 0.8, H * 0.12)
+    else:
+        cyl("dome", R * 0.5, H * 0.4, (0, -R * 0.1, H * 0.85), k.hull2, parent=k.body, segs=8, r2=R * 0.3)
+        cyl("dome_glass", R * 0.38, H * 0.1, (0, -R * 0.1, H * 0.95), k.glass, parent=k.body, segs=8, r2=R * 0.32)
+    torus("emitter_ring", R * 1.3, R * 0.045, (0, 0, -H * 0.3), k.gunm, parent=k.body, seg=64, ring=8)
+    if v == 1:  # (a second ring, above)
+        torus("emitter_ring", R * 1.45, R * 0.04, (0, 0, H * 0.3), k.gunm, parent=k.body, seg=64, ring=8)
+        k.grow((0, 0, H * 0.3), (R * 1.5, R * 1.5, H * 0.1))
+    for i in range(8):
+        a = i * math.pi / 4 + math.pi / 8
+        box("emitter", (R * 0.12, R * 0.12, H * 0.2), (math.cos(a) * R * 1.3, math.sin(a) * R * 1.3, -H * 0.3), k.acc, 0.04, rot=(0, 0, a),
+            parent=k.body)
+        ico("emitter_lamp", R * 0.03, (math.cos(a) * R * 1.3, math.sin(a) * R * 1.3, -H * 0.18), k.win, 1, parent=k.body)
+    k.grow((0, 0, -H * 0.3), (R * 1.36, R * 1.36, H * 0.12))
+    for sx in (-1, 1):
+        sp = k.part("sponson", R * 0.3, R * 0.65, H * 0.5, x=sx * R * 1.0, y=R * 0.1, z=H * 0.08, mats=k.A, chamfer=H * 0.08)
+        k.mount(sp.side_x(sx, R * 0.1), R * 0.1, H * 0.08, side(sx), s)
+    rest = guns - 2
+    for i in range(rest):
+        y = (R * 0.45 if i // 2 == 0 else -R * 0.45)
+        if i % 2 == 0:
+            k.mount(0, y, H * 0.55 + H * 0.125, "top", s)
+        else:
+            k.mount(0, y, -H * 0.52 - H * 0.1, "bottom", s)
+    engines(k, Part(R * 1.5, R * 2.0, H * 0.8), ne, er, y=-R * 0.95)
+    k.lights(R * 1.2, -R * 0.3, H * 0.1, 0.06 + W * 0.004)
+    k.beacon(0, -R * 0.1, H * 1.1, 0.06 + W * 0.003)
+    k.belly(hb, -R * 0.6, R * 0.6, int(8 + W * 0.6), 0.12 + W * 0.03)
+
+
+# each generated ship's signature features, so no two look alike (see features())
+FEATURES = {
+    "gnat": ["x_fins"], "wisp": ["sail"], "pike": ["prow_gun"], "bumble": ["tanks", "antennas"],
+    "drifter": ["domes", "antennas"], "hornet": ["spikes", "ventral_fin"], "digger": ["radiators"], "porter": ["outriggers"],
+    "falcon": ["forward_wings", "dorsal_fin"], "vanguard": ["armor_bands", "prow_gun"], "quarry": ["tanks", "domes"],
+    "wayfarer": ["sail", "x_fins"], "brick": ["antennas", "tanks"], "raptor": ["nacelles"], "bulwark": ["ring_collar", "domes"],
+    "trawler": ["radiators", "hangar_pods"], "phantom": ["split_prow"], "warden": ["antennas", "nacelles"],
+    "tempest": ["nacelles", "x_fins"], "excavator": ["outriggers", "antennas"], "pathfinder": ["radiators", "domes"],
+    "mantis": ["split_prow", "spikes"], "dominator": ["prow_gun", "radiators"], "atlas": ["ring_collar", "hangar_pods"],
+    "valkyrie": ["forward_wings", "nacelles"], "obsidian": ["split_prow", "x_fins"], "juggernaut": ["armor_bands", "outriggers"],
+    "harbinger": ["split_prow", "dorsal_fin"], "starminer": ["radiators", "domes", "tanks"], "paragon": ["dorsal_fin", "ring_collar"],
+    "oracle": ["sail", "antennas"], "colossus": ["hangar_pods", "antennas"], "starforge": ["ring_collar", "tanks", "radiators"],
+    "sovereign": ["prow_gun", "outriggers", "dorsal_fin"], "eclipse": ["sail", "domes", "radiators"],
+    "aeon": ["ring_collar", "split_prow", "nacelles", "x_fins"],
+}
+
+
+def features(k, fx):
+    """Bolt a ship's signature features onto its main hull (k.main): nacelles, outriggers, fins, a prow gun..."""
+    m = k.main
+    L, W, H = m.l, m.w, m.h
+    BW = k.hi.x - k.lo.x
+    rx = (math.radians(90), 0, 0)
+    for f in fx:
+        if f == "x_fins":
+            for a in range(4):
+                ang = a * math.pi / 2 + math.pi / 4
+                k.plate("x_fin", [(-L * 0.28, H * 0.3), (-L * 0.5, H * 0.3), (-L * 0.55, H * 0.3 + L * 0.15), (-L * 0.43, H * 0.3 + L * 0.15)],
+                        max(0.06, H * 0.06), 0.0, plane="yz", rot=(0, ang, 0), mat_=k.acc if a % 2 else k.hull)
+        elif f == "nacelles":
+            # on pylons straight off the hull's flanks, aft
+            r = max(0.3, min(BW * 0.05, L * 0.06))
+            hx = m.hw(-L * 0.28) + m.x
+            for sx in (-1, 1):
+                x = sx * (hx + r * 2.6)
+                k.part("pylon", r * 2.2, L * 0.12, r * 0.6, x=sx * (hx + r * 1.0), y=-L * 0.28, mats=k.G)
+                nac = k.part("nacelle", r * 2.2, L * 0.42, r * 2.2, x=x, y=-L * 0.28, mats=k.A, taper=(0.7, 0.7), chamfer=r * 0.3)
+                box("nacelle_band", (r * 2.35, L * 0.04, r * 2.35), (x, -L * 0.2, 0), k.acc2, 0.0, parent=k.body)
+                k.engine(x, nac.back() - 0.05, 0, r * 0.8)
+        elif f == "radiators":
+            for sx in (-1, 1):
+                for sz in (-1, 1):
+                    c = (sx * (W / 2 + H * 0.45), -L * 0.05, sz * H * 0.32)
+                    box("radiator", (H * 0.9, L * 0.26, 0.05 + L * 0.002), c, k.acc2, 0.0, rot=(0, sx * sz * -0.5, 0), parent=k.body)
+                    k.grow(c, (H * 0.45, L * 0.13, H * 0.25))
+        elif f == "spikes":
+            for i in range(6):
+                y = -L * 0.35 + i * L * 0.12
+                for sx in (-1, 1):
+                    cyl("spike", H * 0.08 + 0.05, H * 0.6, (m.x + sx * m.hw(y) * 0.85, y, m.top(y) + H * 0.2), k.acc,
+                        rot=(0, sx * 0.5, 0), parent=k.body, segs=6, r2=0.0)
+        elif f == "prow_gun":
+            rr = H * 0.1 + 0.08
+            along_y(rr, L * 0.32, (0, m.front() + L * 0.14, -H * 0.05), k.gunm, parent=k.body, segs=14)
+            for c in range(5):
+                torus("coil", rr * 1.6, rr * 0.35, (0, m.front() + L * (0.02 + c * 0.05), -H * 0.05), k.acc2, rot=rx, parent=k.body,
+                      seg=16, ring=6)
+            box("muzzle_brake", (rr * 3.0, L * 0.03, rr * 3.0), (0, m.front() + L * 0.3, -H * 0.05), k.dark, 0.03, parent=k.body)
+            k.grow((0, m.front() + L * 0.16, 0), (rr * 2, L * 0.16, rr * 2))
+        elif f == "dorsal_fin":
+            for sx in (-1, 1):
+                k.plate("dorsal_fin", [(-L * 0.12, H * 0.45), (-L * 0.44, H * 0.45), (-L * 0.5, H * 0.45 + L * 0.2), (-L * 0.32, H * 0.45 + L * 0.2)],
+                        max(0.07, H * 0.06), 0.0, plane="yz", x=sx * m.hw(-L * 0.3) * 0.75, rot=(0, sx * 0.18, 0), mat_=k.acc)
+        elif f == "ventral_fin":
+            k.plate("ventral_fin", [(-L * 0.2, -H * 0.45), (-L * 0.46, -H * 0.45), (-L * 0.5, -H * 0.45 - L * 0.16), (-L * 0.36, -H * 0.45 - L * 0.16)],
+                    max(0.07, H * 0.06), 0.0, plane="yz", mat_=k.acc)
+        elif f == "outriggers":
+            for sx in (-1, 1):
+                x = sx * (BW / 2 + W * 0.22)
+                for y in (L * 0.12, -L * 0.22):
+                    k.part("strut", W * 0.3, L * 0.05, H * 0.16, x=sx * (BW / 2 + W * 0.07), y=y, mats=k.G)
+                pod = k.part("outrigger", W * 0.17, L * 0.58, H * 0.45, x=x, y=-L * 0.05, mats=k.D, taper=(0.6, 0.7), chamfer=H * 0.06)
+                k.portholes(pod, pod.y, 0.0, pod.l * 0.6, 1, 0.2 + L * 0.006)
+                k.engine(x, pod.back() - 0.05, 0, W * 0.05 + 0.1)
+        elif f == "antennas":
+            for i in range(4):
+                y = -L * 0.3 + i * L * 0.12
+                x = (m.hw(y) * 0.55) * (1 if i % 2 else -1)
+                h = H * 0.6 + L * 0.04 * (1 + i % 2)
+                cyl("antenna", 0.025 + L * 0.0008, h, (x, y, m.top(y) + h / 2), k.dark, parent=k.body, segs=6)
+                ico("antenna_tip", 0.05 + L * 0.0015, (x, y, m.top(y) + h), k.amber, 1, parent=k.body)
+                k.grow((x, y, m.top(y) + h / 2), (0.1, 0.1, h / 2))
+        elif f == "domes":
+            for sx in (-1, 1):
+                y = L * 0.1 * sx
+                c = (sx * m.hw(y) * 0.5, y, m.top(y))
+                ico("sensor_dome", H * 0.28 + 0.1, c, k.glass, 2, parent=k.body, smooth=True)
+                cyl("dome_base", H * 0.3 + 0.11, H * 0.08, c, k.dark, parent=k.body, segs=16)
+        elif f == "forward_wings":
+            t = max(0.1, H * 0.12)
+            for sx in (-1, 1):
+                k.plate("fwd_wing", [(sx * m.hw(0) * 0.9, -L * 0.25), (sx * BW * 0.48, -L * 0.02), (sx * BW * 0.48, -L * 0.1),
+                                     (sx * m.hw(0) * 0.9, -L * 0.36)], t, H * 0.1, mat_=k.hull2)
+                k.plate("fwd_wing_tip", [(sx * BW * 0.44, -L * 0.04), (sx * BW * 0.5, -L * 0.0), (sx * BW * 0.5, -L * 0.1), (sx * BW * 0.44, -L * 0.12)],
+                        t * 1.3, H * 0.1, mat_=k.acc)
+        elif f == "ring_collar":
+            R = max(m.hw(L * 0.1), m.hh(L * 0.1)) * 1.35 + 0.2
+            torus("collar", R, R * 0.08, (m.x, L * 0.1, m.z), k.gunm, rot=rx, parent=k.body, seg=40, ring=8)
+            for a in range(6):
+                ang = a * math.pi / 3
+                box("collar_node", (R * 0.16, R * 0.2, R * 0.16), (m.x + math.cos(ang) * R, L * 0.1, m.z + math.sin(ang) * R), k.acc, 0.02,
+                    parent=k.body)
+            k.grow((m.x, L * 0.1, m.z), (R * 1.1, R * 0.1, R * 1.1))
+        elif f == "armor_bands":
+            for y in (L * 0.28, L * 0.02, -L * 0.24):
+                box("armor_band", (m.hw(y) * 2.06, L * 0.035, m.hh(y) * 2.06), (m.x, y, m.z), k.acc, 0.0, parent=k.body)
+        elif f == "split_prow":
+            for sx in (-1, 1):
+                k.part("prong", W * 0.12, L * 0.3, H * 0.4, x=sx * W * 0.2, y=m.front() + L * 0.08, z=-H * 0.05, taper=(0.3, 0.5), mats=k.A)
+            box("prong_glow", (W * 0.2, 0.08, H * 0.12), (0, m.front() + L * 0.02, -H * 0.05), k.win, 0.0, parent=k.body)
+        elif f == "sail":
+            x = -m.hw(-L * 0.1) * 0.6
+            pts = [(L * 0.05, H * 0.4), (-L * 0.3, H * 0.4), (-L * 0.24, H * 0.4 + L * 0.3), (0.0, H * 0.4 + L * 0.26)]
+            k.plate("sail", pts, max(0.05, H * 0.03), 0.0, plane="yz", x=x, mat_=k.glass)
+            k.plate("sail_frame", [(L * 0.05, H * 0.4), (-L * 0.3, H * 0.4), (-L * 0.3, H * 0.4 + L * 0.02), (L * 0.05, H * 0.4 + L * 0.02)],
+                    max(0.08, H * 0.05), 0.0, plane="yz", x=x, mat_=k.dark)
+            cyl("sail_mast", 0.04 + L * 0.001, L * 0.28, (x, -L * 0.12, H * 0.4 + L * 0.14), k.dark, parent=k.body, segs=6)
+        elif f == "tanks":
+            for sx in (-1, 1):
+                for y in (L * 0.05, -L * 0.22):
+                    c = (sx * (m.hw(y) + H * 0.22), y, -H * 0.18)
+                    along_y(H * 0.22 + 0.05, L * 0.22, c, k.hull2, parent=k.body, segs=14)
+                    along_y(H * 0.24 + 0.05, L * 0.02, c, k.acc, parent=k.body, segs=14)
+                    k.grow(c, (H * 0.25, L * 0.11, H * 0.25))
+        elif f == "hangar_pods":
+            for sx in (-1, 1):
+                hp = k.part("hangar_pod", W * 0.18, L * 0.24, H * 0.6, x=sx * (BW / 2 + W * 0.08), y=L * 0.05, mats=k.D, chamfer=H * 0.06)
+                box("hangar_door", (0.08, hp.l * 0.6, hp.h * 0.5), (hp.side_x(sx, hp.y) + sx * 0.03, hp.y, 0), k.dark, 0.0, parent=k.body)
+                box("hangar_light", (0.06, hp.l * 0.55, 0.06), (hp.side_x(sx, hp.y) + sx * 0.06, hp.y, hp.h * 0.28), k.win, 0.0,
+                    parent=k.body)
+
+ARCHETYPES = {"dart": g_dart, "wedge": g_wedge, "block": g_block, "twin": g_twin, "spine": g_spine, "miner": g_miner,
+              "cruiser": g_cruiser, "carrier": g_carrier, "saucer": g_saucer}
+
+
+def fleet_ship(sid):
+    arch, L, W, H, ne, er, guns, s, ch, ca, cg, ex = FLEET[sid]
+    k = Kit(sid, ch, ca, cg)
+    ARCHETYPES[arch](k, L, W, H, ne, er, guns, s, ex)
+    features(k, FEATURES.get(sid, []))
+    if len(k.mounts) != guns:
+        raise RuntimeError("%s: %d mounts, wanted %d" % (sid, len(k.mounts), guns))
+    meta = k.finish("ships")
+    if "scale" in ex:
+        meta["scale"] = ex["scale"]
+    return meta
+
+
+# ---------------------------------------------------------------- weapon turrets
+
+# Every weapon has its own turret on the same Base / Yaw housing: only the Pitch part (what it shoots with)
+# differs. kind: (barrel metal, accent, glow colours)
+TURRET_KINDS = {
+    "mining_lasers": ("4a5262", "2a8a6a", "66ffcc"),
+    "scatter_guns": ("4e4a46", "8a5a2e", "ffb36b"),
+    "pulse_cannons": ("4a4440", "a84a1a", "ff8a3d"),
+    "ion_repeaters": ("404a5a", "2a4a9a", "7aa8ff"),
+    "cryo_projectors": ("5a6670", "6aa8c8", "bff4ff"),
+    "seeker_darts": ("4a4248", "a83a6a", "ff66aa"),
+    "rail_drivers": ("5a6070", "8090a8", "e8f6ff"),
+    "deep_core_drills": ("5a5040", "a88a2a", "ffd24a"),
+    "nova_lances": ("443a52", "9a3aa8", "ff66ff"),
+    "prism_cannons": ("4a4050", "c84a8a", "ff5fa2"),
+    "flak_battery": ("4a4a44", "6a6a3a", "ffe08a"),
+    "plasma_projectors": ("3a4a48", "2a8a7a", "5affd8"),
+    "torpedo_bays": ("444850", "8a3a2a", "ff7a4a"),
+    "graviton_lances": ("3a3450", "5a3aa8", "a080ff"),
+}
+
+
+def turret_kind(kind):
+    """turret_<kind>.glb: the common base and housing, with this weapon's own business end."""
+    c_metal, c_acc, c_glow = TURRET_KINDS[kind]
+    rng = random.Random("turret_" + kind)
+    metal = mat("t_%s_metal" % kind, c_metal, 0.75, 0.35)
+    metal2 = mat("t_%s_metal2" % kind, shade(c_metal, 0.8), 0.75, 0.4)
+    acc = mat("t_%s_accent" % kind, c_acc, 0.5, 0.4)
+    seam = mat("turret_seam", "14181f", 0.6, 0.7)
+    dark = mat("dark_metal", "1c2230", 0.6, 0.6)
+    glow = mat("t_%s_glow" % kind, c_glow, 0.0, 0.3, emit=3.0)
+    r = root("turret_" + kind)
+    base = root("Base")
+    base.parent = r
+    cyl("ring", 0.55, 0.16, (0, 0, 0.08), dark, parent=base, segs=28)
+    cyl("ring_top", 0.5, 0.06, (0, 0, 0.19), metal2, parent=base, segs=28)
+    box("base_band", (1.12, 0.12, 0.05), (0, 0, 0.17), acc, 0.0, parent=base)
+    merge(base, "Base_mesh").parent = base
+    yaw = root("Yaw")
+    yaw.parent = r
+    yaw.location = (0, 0, 0.22)
+    plated("housing", (0.78, 0.82, 0.36), (0, -0.06, 0.18), [metal, seam, metal2], yaw, cell=0.22, rng=rng, chamfer=0.07,
+           depth=0.012, seam=0.01, taper=(0.85, 0.9))
+    for sx in (-1, 1):
+        box("cheek", (0.1, 0.62, 0.5), (sx * 0.44, 0.02, 0.32), acc, 0.02, parent=yaw, taper=(1.0, 0.7))
+    box("back", (0.6, 0.18, 0.28), (0, -0.5, 0.16), dark, 0.02, parent=yaw)
+    ico("lens", 0.035, (0.26, -0.2, 0.43), glow, 1, parent=yaw)
+    merge(yaw, "Yaw_mesh").parent = yaw
+    pitch = root("Pitch")
+    pitch.parent = yaw
+    pitch.location = (0, 0.06, 0.34)
+    rx = (math.radians(90), 0, 0)
+    tip = 1.45
+    if kind == "mining_lasers":
+        box("mantlet", (0.5, 0.32, 0.3), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        along_y(0.12, 0.9, (0, 0.6, 0), metal, parent=pitch, segs=16, r2=0.09)
+        for c in range(3):
+            torus("focus_ring", 0.13 - c * 0.012, 0.025, (0, 0.5 + c * 0.2, 0), acc, rot=rx, parent=pitch, seg=16, ring=6)
+        cyl("emitter", 0.13, 0.12, (0, 1.1, 0), dark, rot=(math.radians(-90), 0, 0), parent=pitch, segs=16, r2=0.16)
+        ico("lens", 0.09, (0, 1.17, 0), glow, 2, parent=pitch)
+        tip = 1.22
+    elif kind == "scatter_guns":
+        box("mantlet", (0.62, 0.34, 0.36), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        for sx in (-1, 1):
+            for sz in (-1, 1):
+                along_y(0.07, 0.62, (sx * 0.12, 0.5, sz * 0.09), metal, parent=pitch, segs=10, r2=0.1)
+        box("shroud", (0.5, 0.2, 0.36), (0, 0.32, 0), acc, 0.03, parent=pitch)
+        tip = 0.86
+    elif kind == "pulse_cannons":
+        box("mantlet", (0.62, 0.36, 0.34), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        along_y(0.15, 1.0, (0, 0.72, 0), metal, parent=pitch, segs=16)
+        for c in range(4):
+            along_y(0.19, 0.06, (0, 0.42 + c * 0.16, 0), dark, parent=pitch, segs=16)
+        torus("muzzle_glow", 0.15, 0.03, (0, 1.22, 0), glow, rot=rx, parent=pitch, seg=16, ring=6)
+        tip = 1.28
+    elif kind == "ion_repeaters":
+        box("mantlet", (0.5, 0.32, 0.3), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        for i in range(6):
+            a = i * math.pi / 3
+            along_y(0.035, 1.1, (math.cos(a) * 0.1, 0.78, math.sin(a) * 0.1), metal, parent=pitch, segs=8)
+        for y in (0.35, 0.8, 1.28):
+            along_y(0.16, 0.06, (0, y, 0), acc, parent=pitch, segs=12)
+        ico("core", 0.05, (0, 1.32, 0), glow, 1, parent=pitch)
+        tip = 1.36
+    elif kind == "cryo_projectors":
+        box("mantlet", (0.6, 0.32, 0.3), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        for sx in (-1, 1):
+            along_y(0.06, 1.0, (sx * 0.12, 0.72, 0), metal, parent=pitch, segs=12, r2=0.075)
+            along_y(0.09, 0.5, (sx * 0.3, 0.25, 0.04), acc, parent=pitch, segs=12)
+            ico("frost", 0.05, (sx * 0.12, 1.24, 0), glow, 1, parent=pitch)
+        tip = 1.26
+    elif kind == "seeker_darts":
+        box("launcher", (0.66, 0.6, 0.42), (0, 0.3, 0.02), metal, 0.04, parent=pitch)
+        box("launcher_band", (0.68, 0.08, 0.44), (0, 0.45, 0.02), acc, 0.0, parent=pitch)
+        for i in range(3):
+            for j in range(2):
+                along_y(0.06, 0.04, (-0.2 + i * 0.2, 0.61, -0.08 + j * 0.18), dark, parent=pitch, segs=10)
+                ico("dart_tip", 0.03, (-0.2 + i * 0.2, 0.62, -0.08 + j * 0.18), glow, 1, parent=pitch)
+        tip = 0.66
+    elif kind == "rail_drivers":
+        box("mantlet", (0.56, 0.34, 0.3), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        for sx in (-1, 1):
+            box("rail", (0.06, 1.6, 0.18), (sx * 0.1, 0.95, 0), metal, 0.01, parent=pitch)
+        for c in range(5):
+            torus("coil", 0.17, 0.03, (0, 0.4 + c * 0.26, 0), acc, rot=rx, parent=pitch, seg=16, ring=6)
+        box("spark_gap", (0.1, 1.4, 0.04), (0, 0.95, 0), glow, 0.0, parent=pitch)
+        tip = 1.78
+    elif kind == "deep_core_drills":
+        box("mantlet", (0.56, 0.3, 0.34), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        along_y(0.2, 0.25, (0, 0.32, 0), dark, parent=pitch, segs=16)
+        along_y(0.18, 0.62, (0, 0.75, 0), acc, parent=pitch, segs=16, r2=0.02)
+        for c in range(4):
+            torus("thread", 0.15 - c * 0.035, 0.022, (0, 0.55 + c * 0.13, 0), metal, rot=rx, parent=pitch, seg=16, ring=4)
+        ico("bit", 0.035, (0, 1.06, 0), glow, 1, parent=pitch)
+        tip = 1.1
+    elif kind == "nova_lances":
+        box("mantlet", (0.5, 0.32, 0.3), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        along_y(0.06, 1.75, (0, 1.0, 0), metal, parent=pitch, segs=12, r2=0.04)
+        for c in range(4):
+            octa("crystal", 0.07, 0.11, (0, 0.5 + c * 0.32, 0), glow, rot=rx, parent=pitch)
+            torus("lance_ring", 0.12, 0.02, (0, 0.5 + c * 0.32, 0), acc, rot=rx, parent=pitch, seg=12, ring=4)
+        tip = 1.9
+    elif kind == "prism_cannons":
+        box("mantlet", (0.6, 0.32, 0.34), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        for i in range(3):
+            a = i * 2 * math.pi / 3 + math.pi / 2
+            along_y(0.05, 1.0, (math.cos(a) * 0.1, 0.72, math.sin(a) * 0.1), metal, parent=pitch, segs=10)
+        along_y(0.16, 0.08, (0, 0.5, 0), acc, parent=pitch, segs=12)
+        octa("prism", 0.11, 0.14, (0, 1.28, 0), glow, rot=rx, parent=pitch)
+        tip = 1.42
+    elif kind == "flak_battery":
+        box("drum", (0.62, 0.42, 0.42), (0, 0.12, 0), metal2, 0.05, parent=pitch)
+        box("drum_band", (0.64, 0.08, 0.44), (0, 0.2, 0), acc, 0.0, parent=pitch)
+        for sx in (-1, 1):
+            for sz in (-1, 1):
+                along_y(0.055, 0.85, (sx * 0.16, 0.7, sz * 0.12), metal, parent=pitch, segs=10)
+                along_y(0.07, 0.1, (sx * 0.16, 1.1, sz * 0.12), dark, parent=pitch, segs=10)
+        tip = 1.16
+    elif kind == "plasma_projectors":
+        box("mantlet", (0.56, 0.32, 0.32), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        along_y(0.09, 1.05, (0, 0.72, 0), metal, parent=pitch, segs=14)
+        for c in range(3):
+            ico("chamber", 0.13, (0, 0.45 + c * 0.25, 0), glow if c == 1 else acc, 2, parent=pitch)
+        along_y(0.13, 0.12, (0, 1.22, 0), dark, parent=pitch, segs=14, r2=0.16)
+        tip = 1.3
+    elif kind == "torpedo_bays":
+        box("mantlet", (0.6, 0.34, 0.36), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        along_y(0.2, 0.95, (0, 0.65, 0), metal, parent=pitch, segs=16)
+        along_y(0.23, 0.1, (0, 1.1, 0), acc, parent=pitch, segs=16)
+        for a in range(4):
+            ang = a * math.pi / 2 + math.pi / 4
+            box("tube_fin", (0.04, 0.4, 0.14), (math.cos(ang) * 0.24, 0.4, math.sin(ang) * 0.24), dark, 0.0, rot=(0, -ang, 0),
+                parent=pitch)
+        ico("warhead", 0.12, (0, 1.12, 0), glow, 1, parent=pitch)
+        tip = 1.2
+    else:  # graviton_lances
+        box("mantlet", (0.56, 0.32, 0.32), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+        along_y(0.07, 1.3, (0, 0.85, 0), metal, parent=pitch, segs=12)
+        for y, rr in ((0.75, 0.24), (1.3, 0.19)):
+            torus("grav_ring", rr, 0.035, (0, y, 0), acc, rot=rx, parent=pitch, seg=24, ring=6)
+            torus("grav_glow", rr * 0.8, 0.02, (0, y, 0), glow, rot=rx, parent=pitch, seg=24, ring=6)
+        ico("singularity", 0.07, (0, 1.5, 0), glow, 2, parent=pitch)
+        tip = 1.56
+    merge(pitch, "Pitch_mesh").parent = pitch
+    empty("Muzzle", (0, tip, 0), pitch)
+    export(r, os.path.join(OUT, "props", "turret_%s.glb" % kind))
+
+
 # ---------------------------------------------------------------- pirates
 
 # id: (hull, trim, lamp colours)
@@ -1017,12 +1852,16 @@ if __name__ == "__main__":
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
-    for sid in (argv or list(SHIPS) + list(ENEMIES) + ["sentinel", "turret"]):
+    every = list(SHIPS) + list(FLEET) + list(ENEMIES) + ["sentinel", "turret"] + ["turret_" + k for k in TURRET_KINDS]
+    for sid in (argv or every):
         reset()
         if sid == "turret":
             turret()
             continue
-        meta[sid] = player_ship(sid) if sid in SHIPS else pirate(sid)
+        if sid.startswith("turret_"):
+            turret_kind(sid[7:])
+            continue
+        meta[sid] = player_ship(sid) if sid in SHIPS else (fleet_ship(sid) if sid in FLEET else pirate(sid))
     os.makedirs(OUT, exist_ok=True)
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=1)

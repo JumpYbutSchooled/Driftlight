@@ -1,26 +1,25 @@
 extends Control
-## Title screen: animated logo over the live starfield, with Continue / New Game / How to Play / Quit.
+## Title screen: the logo over the live station, with Continue / New Game / Guide / Quit, and a choice of save:
+## your pilot, or the Sandbox (everything free, anyone can play it).
 
 const UI = preload("res://scripts/ui/ui.gd")
-const HELP := """[font_size=20][color=#ffe7a3][b]HOW TO PLAY[/b][/color][/font_size]
+const LOGO = preload("res://icon.svg")
+const CONTROLS := """[font_size=20][color=#ffe7a3][b]CONTROLS[/b][/color][/font_size]
 
-[color=#9fd3ff]Flying[/color]   Your ship is heavy: it takes a few seconds to build up speed and to slow down again, and turns carry momentum - it spins up while you hold a turn key and coasts to a stop after.  The keys fly it: W / S pitch the nose up and down, Q / E turn, A / D roll.  R / F raise and lower the throttle (it stays where you leave it, and stops at 0 before reverse).  Hold X to brake.  SHIFT boosts while you have energy.  The mouse swings the camera round your ship without steering it; middle-click puts it back behind you.
-[color=#9fd3ff]Shooting[/color]   Your guns are turrets that swivel on their own toward whatever the crosshair in the middle of the screen is on; click to fire. Each turret can only fire once it's pointing at the target with a clear shot: the pips under the crosshair show which are ready, and one whose shot would pass through your own hull stays quiet, so turn the ship to bring more turrets to bear.
-[color=#9fd3ff]Space is big[/color]   Things at one place are kilometres apart. The OVERVIEW (top right) lists everything nearby: press C to free the cursor and click a row to select it, or right-click whatever's under the crosshair (holding ALT frees the cursor for a moment too). Then 1 approaches it, 2 orbits it, 3 warps you across to it, 5 cruises there (a quick spool-up, then a fast run that weaves round the rocks) and G uses it. The filters along the top of the overview narrow it to places, ships, ore or loot, and to ore of a given quality. Mouse wheel zooms the camera right out.
-[color=#9fd3ff]Docking[/color]   Every station has a huge docking bay. Warping to a station drops you out in front of it, lined up on the bay: fly in through the lit mouth and on to the landing pad at the back to dock. Near a station, G hands it to the docking autopilot instead. Undocking leaves you on the pad, facing out.
-[color=#9fd3ff]Mining[/color]   Ore fields are full of huge veins. Press V to survey them and see what's inside. Shoot a vein and chunks of ore break off the side you hit; they stay where they stop, so fly into them to collect them - or press O and the autopilot flies you round them all. Rarer ores are harder to break. Load ore into a station furnace; it smelts piece by piece over time, even while you're away.
-[color=#9fd3ff]Travel[/color]   Hold SPACE for the quick warp menu, move the mouse up/down to pick a destination and let go of SPACE to warp (or pick Cancel). Your ship turns to face it, charges the drive, then flies the warp tunnel. ESC or X cancels until the jump starts. F11 toggles fullscreen. Stargates lead to other systems: each is a railgun pointed at the system it leads to. Fly into its mouth (or press G near it for the autopilot) and its coils fire you down the barrel into the jump. M opens the galaxy map (click a system to plot a route). N opens the system map, where you launch probes to scan planets and hunt anomalies.
-[color=#9fd3ff]Danger[/color]   [color=#4aa8ff]Core[/color] systems are safe. [color=#4cd964]Secure[/color] ones have a few pirates. [color=#ff5050]Unsecure[/color] ones have no stations. [color=#b366ff]Wild[/color] space - the biggest part of the galaxy - is crawling with pirates, but hides anomalies full of Pristine ore and wormholes.
-[color=#9fd3ff]Photo mode[/color]   F1 hides the interface and freezes everything so you can fly a free camera around (WASD, mouse, E/Q up and down, SHIFT fast, wheel zoom). P saves a picture to your screenshots folder.
-[color=#9fd3ff]Everything else[/color]   G interacts (salvage wrecks, spice stands, obelisks, docking autopilot). I opens your inventory, L your ship fitting (pick the weapon on each turret). Every weapon reaches as far as you can aim. ESC pauses. The game saves itself."""
+[color=#9fd3ff]Flying[/color]   Your ship is heavy: it takes a few seconds to build up speed and to slow down again, and turns carry momentum.  W / S pitch the nose up and down, Q / E turn, A / D roll.  R / F raise and lower the throttle.  Hold X to brake.  SHIFT boosts while you have energy.  The mouse swings the camera freely round your ship without steering it; middle-click puts it back behind you.
+[color=#9fd3ff]Shooting and mining[/color]   Your guns are turrets that swivel toward whatever the crosshair is on; click to fire. Each turret can only fire with a clear shot: the pips under the crosshair show which are ready. Mining Lasers fire a steady beam that locks on to the rock you clicked and cuts ore straight into your hold. Your tractor beam pulls in loose ore near the ship (Tractor Beam modules reach much further).
+[color=#9fd3ff]Getting around[/color]   The OVERVIEW (top right) lists everything nearby: press C to free the cursor and click a row, or right-click whatever's under the crosshair. Then 1 approaches it, 2 orbits it, 3 warps to it, 5 cruises there and G uses it. While the autopilot flies, R / F set how hard it pushes. Hold SPACE for the quick warp menu. M opens the galaxy map: click a system to plot a route there, shift-click to add stops, then press T and the autopilot flies the whole route - warps, stargates and all. N opens the system map, where probes scan planets and hunt anomalies.
+[color=#9fd3ff]Docking[/color]   Fly into a station's docking bay and onto the pad (or press G near it). Stargates are railguns: fly into the mouth and the gate fires you to the next system.
+[color=#9fd3ff]Menus[/color]   I inventory (cargo, notebook, guide, stats), L ship fitting, H the guide, F1 photo mode, F11 fullscreen, ESC pause. The game saves itself."""
 
 var main
 var _buttons: VBoxContainer
 var _continue: Button
-var _slots: HBoxContainer  # pilot / admin save picker (only on the admin device)
+var _slots: HBoxContainer  # pilot / sandbox save picker
 var _slot_btns := {}
 var _restart: Button
 var _help: PanelContainer
+var _help_text: RichTextLabel
 var _t := 0.0
 
 
@@ -29,7 +28,7 @@ func _ready() -> void:
 	mouse_filter = MOUSE_FILTER_STOP
 	var center := CenterContainer.new()
 	center.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
-	center.offset_top = 300
+	center.offset_top = 330
 	center.mouse_filter = MOUSE_FILTER_IGNORE
 	add_child(center)
 	_buttons = VBoxContainer.new()
@@ -38,10 +37,11 @@ func _ready() -> void:
 	_slots = HBoxContainer.new()
 	_slots.add_theme_constant_override("separation", 10)
 	_slots.alignment = BoxContainer.ALIGNMENT_CENTER
-	for s in ["pilot", "admin"]:
-		var b := UI.btn("Pilot save" if s == "pilot" else "Admin save", _pick_slot.bind(s))
+	for s in ["pilot", "sandbox"]:
+		var b := UI.btn("Pilot" if s == "pilot" else "Sandbox", _pick_slot.bind(s))
 		b.toggle_mode = true
 		b.custom_minimum_size = Vector2(165, 40)
+		b.tooltip_text = "Your career" if s == "pilot" else "Everything free, every tool - its own save, separate from your pilot"
 		_slots.add_child(b)
 		_slot_btns[s] = b
 	_buttons.add_child(_slots)
@@ -49,7 +49,8 @@ func _ready() -> void:
 	_restart.visible = false
 	_continue = _menu_button("Continue", func(): main.continue_game(), "gate")
 	_menu_button("New Game", _new_game, "ship")
-	_menu_button("How to Play", func(): _help.visible = not _help.visible, "mission")
+	_menu_button("Guide", _show_help.bind(UI.GUIDE), "star")
+	_menu_button("Controls", _show_help.bind(CONTROLS), "mission")
 	_menu_button("Quit", func(): get_tree().quit(), "skull")
 
 	var hc := CenterContainer.new()
@@ -63,9 +64,9 @@ func _ready() -> void:
 	var hv := VBoxContainer.new()
 	hv.add_theme_constant_override("separation", 14)
 	_help.add_child(hv)
-	var r := UI.rich(HELP, 1060.0)
-	r.add_theme_font_size_override("normal_font_size", 19)
-	hv.add_child(r)
+	_help_text = UI.rich("", 1060.0)
+	_help_text.add_theme_font_size_override("normal_font_size", 19)
+	hv.add_child(_help_text)
 	var close := UI.btn("Got it", func(): _help.hide())
 	close.custom_minimum_size = Vector2(200, 48)
 	close.size_flags_horizontal = SIZE_SHRINK_CENTER
@@ -80,14 +81,23 @@ func _menu_button(text: String, cb: Callable, _icon: String) -> Button:
 	return b
 
 
+func _show_help(text: String) -> void:
+	if _help.visible and _help_text.text == text:
+		_help.hide()
+		return
+	_help_text.text = text
+	_help.show()
+	UI.pop_in(_help)
+
+
 func open() -> void:
-	_slots.visible = Game.admin_allowed()
+	Game.migrate_saves()  # (v4 started everyone over: older saves are set aside)
 	_pick_slot(Game.save_slot)
 	_help.hide()
 	show()
 
 
-## Pick the pilot or admin save: Continue and New Game then act on that slot.
+## Pick the pilot or sandbox save: Continue and New Game then act on that slot.
 func _pick_slot(s: String) -> void:
 	Game.use_slot(s)
 	for k in _slot_btns:
@@ -113,18 +123,28 @@ func _draw() -> void:
 	var vs := size
 	# a faint darkening so the name reads over the station
 	draw_rect(Rect2(Vector2.ZERO, vs), Color(0.0, 0.0, 0.0, 0.25))
-	var logo := "D R I F T L I G H T"
 	var y := vs.y * 0.3
 	var glow := 0.85 + 0.15 * sin(_t * 0.8)
-	draw_string(UI.title, Vector2(0, y), logo, HORIZONTAL_ALIGNMENT_CENTER, vs.x, 72, Color(0.88, 0.92, 0.96, glow))
+	var ls := 132.0
+	draw_texture_rect(LOGO, Rect2(Vector2(vs.x / 2.0 - ls / 2.0, y - 80.0 - ls), Vector2(ls, ls)), false, Color(1, 1, 1, 0.95))
+	draw_string(UI.title, Vector2(0, y), "D R I F T L I G H T", HORIZONTAL_ALIGNMENT_CENTER, vs.x, 72, Color(0.88, 0.92, 0.96, glow))
+	# a streak of light drifting across under the name
+	var sx := fposmod(_t * 0.12, 1.4) - 0.2
 	draw_line(Vector2(vs.x / 2.0 - 260.0, y + 26.0), Vector2(vs.x / 2.0 + 260.0, y + 26.0), UI.LINE, 1.0)
+	var hx := vs.x / 2.0 - 260.0 + 520.0 * clampf(sx, 0.0, 1.0)
+	draw_line(Vector2(maxf(vs.x / 2.0 - 260.0, hx - 60.0), y + 26.0), Vector2(hx, y + 26.0), Color(0.6, 0.95, 1.0, 0.6), 2.0)
 	draw_string(UI.body, Vector2(0, y + 60), "mine   -   explore   -   survive the Wild", HORIZONTAL_ALIGNMENT_CENTER, vs.x, 22, UI.MUTED)
-	if Game.admin:
-		draw_string(UI.body, Vector2(0, y + 92), "ADMIN SAVE   -   everything free, jump anywhere, god mode (F8)", HORIZONTAL_ALIGNMENT_CENTER, vs.x, 18, UI.GOLD)
+	if Game.sandbox:
+		draw_string(UI.body, Vector2(0, y + 92), "SANDBOX   -   everything free, jump anywhere, god mode, spawn tools (F8)", HORIZONTAL_ALIGNMENT_CENTER,
+			vs.x, 18, UI.GOLD)
+	elif Game.reset_note:
+		draw_string(UI.body, Vector2(0, y + 92), "Version 4 started everyone over - your old save was kept as a backup file.",
+			HORIZONTAL_ALIGNMENT_CENTER, vs.x, 17, UI.GOLD)
 	var upd: String = main.updater.status
 	draw_string(UI.body, Vector2(30, vs.y - 26), "v%d" % Game.VERSION + ("   -   " + upd if upd != "" else ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
 		Color(UI.MUTED, 0.6))
-	var foot := "1,000 systems  -  13 ships  -  11 weapons  -  18 modules  -  %d achievements" % Game.ACHIEVEMENTS.size()
+	var foot := "1,000 systems in 10 regions  -  %d ships  -  %d weapons  -  %d modules  -  %d achievements" % [Game.SHIPS.size(),
+		Game.WEAPONS.size(), Game.MODULES.size(), Game.ACHIEVEMENTS.size()]
 	draw_string(UI.body, Vector2(0, vs.y - 50), foot, HORIZONTAL_ALIGNMENT_CENTER, vs.x, 16, Color(UI.MUTED, 0.7))
 	draw_string(UI.body, Vector2(0, vs.y - 26), "Font: Barlow Semi Condensed (SIL Open Font License)",
 		HORIZONTAL_ALIGNMENT_CENTER, vs.x, 13, Color(UI.MUTED, 0.45))

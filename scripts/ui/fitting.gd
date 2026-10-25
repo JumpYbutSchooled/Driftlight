@@ -110,6 +110,7 @@ func open() -> void:
 	_sel = -1
 	_rebuild()
 	show()
+	UI.pop_in(get_child(0))
 
 
 func _process(delta: float) -> void:
@@ -132,6 +133,8 @@ func _process(delta: float) -> void:
 func _rebuild() -> void:
 	if _model_id != Game.ship_id:
 		_build_model()
+	elif _guns != null and str(_guns.list.map(func(tu): return tu.kind)) != str(_kinds()):
+		_guns.build(_kinds())  # each weapon has its own turret
 	var ship: Dictionary = Game.SHIPS[Game.ship_id]
 	_title.text = "SHIP FITTING  -  %s  (%s)" % [ship.name, ship["class"]]
 	for c in _list.get_children():
@@ -152,14 +155,15 @@ func _rebuild() -> void:
 	var st := Game.stats_ship()
 	_list.add_child(UI.heading("MODULES  (%d / %d)" % [Game.modules_equipped.size(), st.slots], 18))
 	for i in Game.modules_equipped.size():
-		var m: Dictionary = Game.MODULES[Game.modules_equipped[i]]
-		_list.add_child(_module_row(m.name + "   installed", m.desc, "Remove", Game.unequip_module.bind(i), true))
+		var mid: String = Game.modules_equipped[i]
+		var m: Dictionary = Game.MODULES[mid]
+		_list.add_child(_module_row(mid, m.name + "   installed", m.desc, "Remove", Game.unequip_module.bind(i), true))
 	for id in Game.MODULE_ORDER:
 		var n: int = Game.module_stock.get(id, 0)
 		if n > 0:
 			var m: Dictionary = Game.MODULES[id]
-			_list.add_child(_module_row("%s  x%d" % [m.name, n], m.desc, "Install", Game.equip_module.bind(id),
-				Game.modules_equipped.size() < st.slots))
+			_list.add_child(_module_row(id, "%s  x%d" % [m.name, n], m.desc, "Install", Game.equip_module.bind(id),
+				Game.modules_equipped.size() < st.slots and Game.module_fits(id)))
 	if Game.modules_equipped.is_empty() and Game.module_stock.values().all(func(v): return v <= 0):
 		_list.add_child(UI.lbl("No modules yet: build them in a station's Fabricator, or find them in wrecks.", 15, UI.MUTED))
 
@@ -199,16 +203,19 @@ func _slot_row(i: int, current: String) -> Control:
 	return cell
 
 
-func _module_row(title: String, desc: String, action: String, cb: Callable, enabled: bool) -> Control:
+## A module: its kind's icon and colour (so the kinds are easy to tell apart), name, what it does, a button.
+func _module_row(id: String, title: String, desc: String, action: String, cb: Callable, enabled: bool) -> Control:
+	var col := Game.module_color(id)
 	var cell := PanelContainer.new()
 	cell.add_theme_stylebox_override("panel", UI.frame("card", 10))
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 10)
 	cell.add_child(h)
+	h.add_child(UI.icon_rect(Game.module_icon(id), col, 3))
 	var v := VBoxContainer.new()
 	v.size_flags_horizontal = SIZE_EXPAND_FILL
 	h.add_child(v)
-	v.add_child(UI.lbl(title, 16, Color("c9b6ff")))
+	v.add_child(UI.lbl("%s   %s" % [title, Game.MODULE_CATS[Game.MODULES[id].cat].name.to_upper()], 16, col.lerp(UI.TEXT, 0.25)))
 	var d := UI.lbl(desc, 14, UI.MUTED)
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(d)
@@ -218,6 +225,10 @@ func _module_row(title: String, desc: String, action: String, cb: Callable, enab
 	b.size_flags_vertical = SIZE_SHRINK_CENTER
 	h.add_child(b)
 	return cell
+
+
+func _kinds() -> Array:
+	return Game.loadout().map(func(w): return Game.WEAPONS[w].base)
 
 
 static func weapon_line(w: Dictionary) -> String:
@@ -263,7 +274,7 @@ func _build_model() -> void:
 		_model.queue_free()
 	_model = Models.ship(Game.ship_id)
 	_pivot.add_child(_model)
-	_guns = Turrets.new(_model)
+	_guns = Turrets.new(_model, _kinds())
 	var size := Models.size(Game.ship_id)
 	_dist = maxf(size.x, size.z) * 1.55 + 3.0
 	_cam.far = _dist * 10.0

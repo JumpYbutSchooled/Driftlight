@@ -25,6 +25,10 @@ const BOOST_DRAIN := 8.0  # energy per second (a full tank boosts for a good whi
 const BOLT_SPEED_MULT := 2.5  # bolts fly this much faster than the weapon numbers say (over half the time: a bit more range)
 const FIRE_RATE_MULT := 1.5  # and the guns cycle this much quicker
 const BOLT_RANGE := 8000.0  # metres: every weapon reaches as far as you can see to aim
+const BEAM_RANGE := 4000.0  # metres a mining beam reaches
+const BEAM_COLLECT := [0.5, 0.6, 0.75, 0.9, 1.0]  # share of the ore a mining beam cuts straight into the hold, by mark
+const TRACTOR_BEAMS := 6  # most loose chunks the tractor pulls in at once
+const LASER_SHADER = preload("res://shaders/laser.gdshader")
 const SHIELD_SHADER = preload("res://shaders/shield.gdshader")
 const PLUME_SHADER = preload("res://shaders/plume.gdshader")
 const NOZZLE_SHADER = preload("res://shaders/nozzle.gdshader")
@@ -71,6 +75,12 @@ var _bank := 0.0
 var turn_input := Vector3.ZERO  # from the keys (main._steer): x pitch, y yaw, z roll, each -1..1
 var ang_vel := Vector3.ZERO  # world-space angular velocity, rad/s
 var cruise_v := 0.0  # set by main's cruise autopilot: the speed to hold (0: not cruising)
+var beam_lock = null  # what the mining beams are locked on to (while the trigger's held)
+var _beams := []  # per gun slot: its beam (a Node3D holding the beam mesh and a glow at the far end), or null
+var _beam_dmg := 0.0  # beam damage built up on a ship or crate, dealt in bites
+var _beam_fx := 0.0
+var _tractor := []  # the tractor beam meshes
+var _loadout_sig := ""
 var _lights := []  # an engine light per nozzle, lighting the hull while it burns
 
 
@@ -99,7 +109,18 @@ func _refresh_stats() -> void:
 	shield = minf(shield, st.shield)
 	energy = minf(energy, st.energy)
 	if _model_id != Game.ship_id:
+		var fresh := _model_id != ""
 		_build_model()
+		if fresh:
+			heal_full()  # (a ship you've just boarded comes out of the hangar repaired)
+	elif _loadout_sig != str(Game.loadout()):
+		_guns.build(_kinds())  # a different weapon on a turret: its own turret model
+		_after_turrets()
+
+
+## The weapon (base id) on each gun slot: picks each turret's model.
+func _kinds() -> Array:
+	return Game.loadout().map(func(w): return Game.WEAPONS[w].base)
 
 
 func _build_model() -> void:
@@ -111,15 +132,11 @@ func _build_model() -> void:
 	engines = Models.markers(model, "Engine")
 	hull_box = Models.hull(Game.ship_id)
 	# a turret on every gun mount (on top, underneath or out to the side: the mount says which way)
-	_guns = Turrets.new(model)
-	turrets = _guns.list
-	muzzles = _guns.muzzles()
+	_guns = Turrets.new(model, _kinds())
 	var size := Models.size(Game.ship_id)
 	radius = maxf(size.x, size.z) * 0.45
 	_shield_mesh.scale = Vector3(size.x * 0.62, maxf(size.y * 1.4, size.x * 0.3), size.z * 0.62)
-	_slot_cd = []
-	_slot_cd.resize(muzzles.size())
-	_slot_cd.fill(0.0)
+	_after_turrets()
 	_glows = []
 	_plumes = []
 	for l in _lights:
@@ -153,6 +170,16 @@ func _build_model() -> void:
 		l.light_energy = 0.0
 		e.add_child(l)
 		_lights.append(l)
+
+
+## After the turrets were (re)built: their muzzles, cooldowns, muzzle flashes and mining beams.
+func _after_turrets() -> void:
+	_loadout_sig = str(Game.loadout())
+	turrets = _guns.list
+	muzzles = _guns.muzzles()
+	_slot_cd = []
+	_slot_cd.resize(muzzles.size())
+	_slot_cd.fill(0.0)
 	_mflash = []
 	_mflash_t = []
 	for m in muzzles:
@@ -161,6 +188,53 @@ func _build_model() -> void:
 		m.add_child(q)
 		_mflash.append(q)
 		_mflash_t.append(0.0)
+	for b in _beams:
+		if b != null:
+			b.queue_free()
+	_beams = []
+	var lo := Game.loadout()
+	for i in muzzles.size():
+		var w: Dictionary = Game.WEAPONS[lo[i] if i < lo.size() else Game.BLASTER]
+		_beams.append(_beam_node(w.color, Vector2(w.size).x * 0.35) if w.get("beam", false) else null)
+	beam_lock = null
+
+
+## A beam: a steady laser core from the muzzle to whatever it hits, with a glow where it lands. Placed in
+## world space each frame (see _update_beams).
+func _beam_node(color: Color, width: float) -> Node3D:
+	var holder := Node3D.new()
+	holder.top_level = true
+	holder.visible = false
+	var core := MeshInstance3D.new()
+	core.mesh = Models.streak_mesh(1.0, 1.0)
+	var m := ShaderMaterial.new()
+	m.shader = LASER_SHADER
+	m.set_shader_parameter("color", color)
+	m.set_shader_parameter("steady", 1.0)
+	core.material_override = m
+	core.rotation.x = -PI / 2.0
+	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	core.set_meta("width", width)
+	holder.add_child(core)
+	holder.add_child(Models.glow_quad(Color(color.lerp(Color.WHITE, 0.4), 0.85), maxf(2.0, width * 8.0)))
+	add_child(holder)
+	return holder
+
+
+## Point a beam from `from` to `to`.
+static func place_beam(holder: Node3D, from: Vector3, to: Vector3, width: float) -> void:
+	var d := to - from
+	var length := d.length()
+	if length < 0.01:
+		holder.visible = false
+		return
+	var dir := d / length
+	holder.global_transform = Transform3D(Basis.looking_at(dir, Vector3.UP if absf(dir.y) < 0.99 else Vector3.RIGHT), from)
+	var core: MeshInstance3D = holder.get_child(0)
+	core.scale = Vector3(width, length, width)
+	core.position = Vector3(0, 0, -length * 0.5)
+	holder.get_child(1).position = Vector3(0, 0, -length)
+	holder.visible = true
 
 
 ## How wide an engine's nozzle is: Blender scales each Engine_N marker by its nozzle's radius. (The scale is
@@ -242,7 +316,8 @@ func _process(delta: float) -> void:
 	var want_boost := false
 	var braking := false
 	if control:
-		_update_throttle(delta)
+		if main.autopilot.is_empty():
+			_update_throttle(delta)  # (on autopilot R/F set its power instead: see main)
 		braking = Input.is_action_pressed("cut_throttle")
 		if braking:
 			throttle = 0.0
@@ -292,6 +367,8 @@ func _process(delta: float) -> void:
 
 	var aim_pt: Vector3 = main.aim_point
 	_aim_turrets(delta, aim_pt)
+	_update_beams(delta)
+	_update_tractor()
 	_fire_cd = INF
 	for i in _slot_cd.size():
 		_slot_cd[i] = maxf(0.0, _slot_cd[i] - delta)
@@ -423,12 +500,16 @@ func _collide_rocks() -> void:
 
 ## Swing every turret toward `target` and work out which can fire: on target, within its arc (a turret on
 ## top can't shoot down through the deck, one underneath can't shoot up), and with a clear line past the hull.
+## Mining beams locked on to something aim at that instead.
 func _aim_turrets(delta: float, target: Vector3) -> void:
-	_guns.aim(delta, target)
+	var targets := []
+	for i in turrets.size():
+		targets.append(_beam_point(i) if i < _beams.size() and _beams[i] != null and beam_lock != null else null)
+	_guns.aim(delta, target, 1.0, targets)
 	guns_ready = []
 	turret_why = []
 	for i in turrets.size():
-		var clear := can_fire(turrets[i].muzzle, target)
+		var clear := can_fire(turrets[i].muzzle, target if targets[i] == null else targets[i])
 		guns_ready.append(_guns.on_target[i] and clear)
 		turret_why.append("ready" if guns_ready[-1] else ("out of arc" if not _guns.in_arc[i] else ("swinging"
 			if not _guns.on_target[i] else "hull in the way")))
@@ -479,6 +560,8 @@ func fire_at(aim: Vector3) -> int:
 		if _slot_cd[i] > 0.0 or i >= guns_ready.size() or not guns_ready[i]:
 			continue
 		var w: Dictionary = Game.WEAPONS[loadout[i] if i < loadout.size() else Game.BLASTER]
+		if w.get("beam", false):
+			continue  # beams fire continuously (see _update_beams)
 		var s := shot(w)
 		var pellets: int = w.get("pellets", 1)
 		var spread: float = deg_to_rad(w.get("spread", 0.0))
@@ -520,3 +603,93 @@ func take_damage(amount: float, from := Vector3.INF) -> void:
 	if hull <= 0.0:
 		hull = 0.0
 		main.player_died()
+
+# ---------------------------------------------------------------- mining beams and tractor beams
+
+## Where slot i's beam lands on the locked target (its surface, on the side facing that turret).
+func _beam_point(i: int):
+	if beam_lock == null or not main.target_valid(beam_lock):
+		return null
+	var c: Vector3 = beam_lock.global_position
+	var from: Vector3 = muzzles[i].global_position if i < muzzles.size() else position
+	return c + (from - c).normalized() * beam_lock.radius * 0.9
+
+
+## Mining beams: holding fire locks them on to the rock (or ship, or container) under the crosshair; while
+## it's held they stay on it - the turrets track it whatever the crosshair does - and cut it steadily. A
+## better mark sends more of the ore it cuts straight into the hold.
+func _update_beams(delta: float) -> void:
+	if _beams.is_empty():
+		return
+	var firing: bool = control and alive and main.mode == "fly" and not main.cursor_free() and Input.is_action_pressed("fire")
+	if not firing:
+		beam_lock = null
+	elif beam_lock == null or not main.target_valid(beam_lock):
+		beam_lock = null
+		var t = main.aim_target
+		if t != null and is_instance_valid(t) and not t.is_in_group("npcs") and position.distance_to(t.global_position) < BEAM_RANGE + t.radius:
+			beam_lock = t
+	var lo := Game.loadout()
+	var any := false
+	var power := 0.0
+	var dmg := 0.0
+	var collect := 0.0
+	var col := Color.WHITE
+	for i in _beams.size():
+		var holder = _beams[i]
+		if holder == null:
+			continue
+		var p = _beam_point(i)
+		if p == null or i >= guns_ready.size() or not guns_ready[i] or position.distance_to(p) > BEAM_RANGE:
+			holder.visible = false
+			continue
+		var w: Dictionary = Game.WEAPONS[lo[i]]
+		var core: MeshInstance3D = holder.get_child(0)
+		var width: float = core.get_meta("width") * (1.0 + 0.12 * sin(Time.get_ticks_msec() * 0.04 + i * 1.7))
+		place_beam(holder, muzzles[i].global_position, p, width)
+		any = true
+		var k: float = w.rate * st.fire * FIRE_RATE_MULT * delta
+		power += w.mining * st.mining * k
+		dmg += w.damage * st.damage * k
+		collect = maxf(collect, BEAM_COLLECT[w.tier - 1])
+		col = w.color
+	if any and beam_lock != null:
+		var to_ship: Vector3 = (position - beam_lock.global_position).normalized()
+		if beam_lock.is_in_group("asteroids"):
+			beam_lock.hit(power, -to_ship, collect)
+		else:
+			_beam_dmg += dmg
+			if _beam_dmg >= 4.0 or beam_lock.get("hp") != null and _beam_dmg >= beam_lock.hp:
+				beam_lock.take_damage(_beam_dmg)
+				_beam_dmg = 0.0
+		_beam_fx -= delta
+		if _beam_fx <= 0.0 and main.target_valid(beam_lock):
+			_beam_fx = 0.12
+			var at: Vector3 = beam_lock.global_position + to_ship * beam_lock.radius * 0.9
+			main.rock_hit(at, col, to_ship)
+	Sfx.set_beam(1.0 if any else 0.0)
+
+
+## How far the tractor beam reaches: a short pull on every ship, much further with Tractor Beam modules (and
+## the big ships reach further anyway).
+func tractor_range() -> float:
+	return st.get("tractor", 90.0) + radius * 1.5
+
+
+## Faint beams to the loose chunks the tractor is pulling in (the chunks pull themselves: see ore_chunk.gd).
+func _update_tractor() -> void:
+	var pulled := []
+	var reach := tractor_range()
+	if alive and main.mode in ["fly", "warp"]:
+		for c in main.group("chunks"):
+			if c.tractored and position.distance_to(c.position) < reach:
+				pulled.append(c)
+	pulled.sort_custom(func(a, b): return position.distance_squared_to(a.position) < position.distance_squared_to(b.position))
+	while _tractor.size() < mini(pulled.size(), TRACTOR_BEAMS):
+		_tractor.append(_beam_node(Color(0.45, 0.85, 1.0), 0.5 + radius * 0.02))
+	for i in _tractor.size():
+		if i < pulled.size():
+			place_beam(_tractor[i], position, pulled[i].position, _tractor[i].get_child(0).get_meta("width"))
+			_tractor[i].get_child(1).scale = Vector3.ONE * 0.4
+		else:
+			_tractor[i].visible = false
