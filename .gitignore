@@ -1,0 +1,6 @@
+# Godot's import cache and editor state
+.godot/
+# exported builds and release zips
+build/
+*.tmp
+export_credentials.cfg
