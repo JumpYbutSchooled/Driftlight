@@ -23,15 +23,17 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 | R / F | pitch the nose up / down |
 | Q / E | roll |
 | X | brake, SHIFT boost |
-| Mouse | aim; click to fire (a gun only fires if it can see the target past your hull) |
-| Right-click | select whatever is under the reticle (or click a row on the Overview) |
+| Mouse | swing the camera round the ship (it doesn't steer) |
+| Click | fire: the gun turrets swivel to whatever the crosshair is on and fire once they're on it |
+| Right-click | select whatever is under the crosshair |
+| C (or hold ALT) | free the cursor to click rows on the Overview and things in space |
 | 1 / 2 / 3 | approach / orbit / warp to the selected thing |
 | G | dock, jump through a gate, salvage, use |
 | V | survey scan: see what's in the asteroids around you |
 | SPACE (hold) | quick warp menu |
 | M / N | galaxy map / system map |
 | I | inventory |
-| Wheel / middle-drag | zoom / look around |
+| Wheel / middle-click | zoom / put the camera back behind the ship |
 | F1 | photo mode (P saves a picture) |
 | F3 | debug screen, F11 fullscreen, ESC menu |
 
