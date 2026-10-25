@@ -1,6 +1,7 @@
 extends Node3D
 ## An ore vein: a huge rock (tens of metres across) holding 15-100 ore. Shooting it splits ore chunks off
-## the side you hit until it's empty; rarer ores are harder. The survey scanner (V) reveals what's in it.
+## the side you hit until it's empty, when it breaks apart; it keeps its full size until then. Rarer ores
+## are harder. The survey scanner (V) reveals what's in it.
 
 const ROCK_SHADER = preload("res://shaders/rock.gdshader")
 
@@ -52,12 +53,12 @@ func setup(ore: String, q: int, amount: int, rock_seed: int, size: float) -> voi
 func describe() -> String:
 	if not scanned:
 		return "Asteroid  -  %d m across  -  V to survey it" % roundi(radius * 2.0)
-	return "%s vein (%s)  -  %d ore left  -  %d%% to next piece" % [Game.ORES[ore_id].name, Game.Q_NAMES[quality], remaining,
+	return "%s  -  %d ore left  -  %d%% to next piece" % [Game.ore_label(ore_id, quality, "vein"), remaining,
 		roundi(_acc / Game.hardness(ore_id) * 100.0)]
 
 
 func _resize() -> void:
-	var s := _base_r * (0.45 + 0.55 * sqrt(float(remaining) / total))
+	var s := _base_r
 	_mesh.scale = Vector3.ONE * s
 	radius = s * 1.05
 
@@ -94,4 +95,3 @@ func hit(power: float, dir: Vector3) -> void:
 		main.explosion(position, minf(radius / 6.0, 6.0), Game.ORES[ore_id].color, true)
 		queue_free()
 		return
-	_resize()

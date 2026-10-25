@@ -4,7 +4,6 @@ extends CenterContainer
 const UI = preload("res://scripts/ui/ui.gd")
 
 var main
-var _thrust_btn: Button
 
 
 func _ready() -> void:
@@ -44,11 +43,6 @@ func _ready() -> void:
 		s.value_changed.connect(_volume.bind(bus))
 		row.add_child(s)
 		v.add_child(row)
-	v.add_child(UI.heading("CONTROLS", 12, UI.MUTED))
-	_thrust_btn = UI.btn("", _toggle_thrust, "throttle", UI.HEAD)
-	_thrust_btn.custom_minimum_size = Vector2(0, 52)
-	v.add_child(_thrust_btn)
-	_thrust_label()
 	v.add_child(HSeparator.new())
 	for b in [["Save & Quit to Title", _to_title, "gate"], ["Quit to Desktop", _quit, "skull"]]:
 		var btn := UI.btn(b[0], b[1], b[2], UI.BAD if b[0].begins_with("Quit") else UI.TEXT)
@@ -74,15 +68,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if visible and event.is_action_pressed("close"):
 		close()
 		get_viewport().set_input_as_handled()
-
-
-func _toggle_thrust() -> void:
-	Sfx.hold_thrust = not Sfx.hold_thrust
-	_thrust_label()
-
-
-func _thrust_label() -> void:
-	_thrust_btn.text = "Throttle: hold W to thrust, S to reverse" if Sfx.hold_thrust else "Throttle: W/S move a lever that stays put"
 
 
 func _volume(v: float, bus: String) -> void:

@@ -20,7 +20,7 @@ func _ready() -> void:
 	_mesh = MeshInstance3D.new()
 	_mesh.mesh = Models.rock_mesh(randi())
 	_mesh.material_override = _material(ore_id, quality)
-	radius = randf_range(1.4, 2.0) * (1.0 + 0.15 * amount)
+	radius = randf_range(0.85, 1.25) * (1.0 + 0.12 * amount)
 	_mesh.scale = Vector3.ONE * radius
 	_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_mesh)
@@ -48,7 +48,7 @@ static func _material(ore: String, q: int) -> ShaderMaterial:
 
 
 func describe() -> String:
-	return "%s ore (%s)  x%d  -  fly into it to collect" % [Game.ORES[ore_id].name, Game.Q_NAMES[quality], amount]
+	return "%s  x%d  -  fly into it to collect" % [Game.ore_label(ore_id, quality, "ore"), amount]
 
 
 func _process(delta: float) -> void:

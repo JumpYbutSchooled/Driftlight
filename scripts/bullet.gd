@@ -41,7 +41,9 @@ func _process(delta: float) -> void:
 		return
 	_travelled += vel.length() * delta
 	_stretch()
-	for a in get_tree().get_nodes_in_group("asteroids"):
+	for a in (main.group("asteroids") if main.near_field(position) else []):
+		if not is_instance_valid(a) or a.is_queued_for_deletion():
+			continue
 		if _crosses(from, a.position, a.radius):
 			var n: Vector3 = (from - a.position).normalized()
 			main.rock_hit(a.position + n * a.radius * 0.9, Game.ORES[a.ore_id].color, n)
@@ -51,7 +53,9 @@ func _process(delta: float) -> void:
 			return
 	if friendly:
 		for group in ["pirates", "crates"]:
-			for p in get_tree().get_nodes_in_group(group):
+			for p in main.group(group):
+				if not is_instance_valid(p) or p.is_queued_for_deletion():
+					continue
 				if not _hit.has(p) and _crosses(from, p.position, p.radius):
 					p.take_damage(damage)
 					if slow > 0.0 and group == "pirates":
@@ -85,7 +89,9 @@ func _crosses(from: Vector3, c: Vector3, r: float) -> bool:
 func _nearest_pirate():
 	var best = null
 	var bd := 90.0 * 90.0
-	for p in get_tree().get_nodes_in_group("pirates"):
+	for p in main.group("pirates"):
+		if not is_instance_valid(p):
+			continue
 		var d := position.distance_squared_to(p.position)
 		if d < bd:
 			bd = d

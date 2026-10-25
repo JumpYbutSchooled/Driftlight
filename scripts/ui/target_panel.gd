@@ -1,7 +1,8 @@
 extends Control
 ## The selected target, at the top of the screen: what it is, how far, and what you can do with it.
-## Approach (Q) flies you to it, Orbit (R) circles it, Warp (F) jumps you across the location to it when
-## it's far, and Dock / Jump / Use (G) flies there and uses it. The buttons can be clicked too.
+## Approach (1) flies you to it, Orbit (2) circles it, Warp (3) jumps you across the location to it when
+## it's far, Cruise (5) races you there threading round the rocks, and Dock / Jump / Use (G) flies there
+## and uses it. The buttons can be clicked too.
 
 const UI = preload("res://scripts/ui/ui.gd")
 const W := 600.0
@@ -65,7 +66,7 @@ func _draw() -> void:
 		sub = main.autopilot_text()
 	_text(Vector2(48, 60), sub, 15, Color("9fd0ee") if not main.autopilot.is_empty() else UI.MUTED, HORIZONTAL_ALIGNMENT_LEFT, 540)
 	_buttons = []
-	var orders := [["approach", "1  Approach"], ["orbit", "2  Orbit"], ["warp", "3  Warp to"]]
+	var orders := [["approach", "1  Approach"], ["orbit", "2  Orbit"], ["warp", "3  Warp to"], ["cruise", "5  Cruise"]]
 	if info.use != "":
 		orders.append(["use", "G  " + info.use])
 	var bw := (size.x - 28.0 - (orders.size() - 1) * 8.0) / orders.size()

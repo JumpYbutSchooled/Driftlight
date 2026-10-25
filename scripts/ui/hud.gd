@@ -143,7 +143,7 @@ func _draw() -> void:
 
 	if prompt != "":
 		_text(Vector2(0, vs.y - 150), prompt, 22, UI.GOLD, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	var keys := "W/S throttle   A/D turn   R/F pitch   Q/E roll   X brake   SHIFT boost   mouse look   click fire   right-click select   1 approach   2 orbit   3 warp to   G use   V scan   SPACE warp   C cursor   wheel zoom   middle-click recentre   I cargo   N/M maps   F1 photo"
+	var keys := "W/S pitch   A/D turn   Q/E roll   R/F throttle   X brake   SHIFT boost   mouse look   click fire   right-click select   1 approach   2 orbit   3 warp to   5 cruise   G use   O collect ore   V scan   SPACE warp   C cursor   wheel zoom   I cargo   L fitting   N/M maps   F1 photo"
 	_text(Vector2(0, vs.y - 20), keys, 14, Color(UI.MUTED, 0.75), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
 	if main.command:
 		_text(Vector2(0, vs.y - 44), "CURSOR FREE  -  click to select  -  C or ESC for mouse look", 14, Color(UI.GOLD, 0.85),
@@ -412,7 +412,8 @@ func _draw_side_panels(vs: Vector2, top: float) -> void:
 		for key in keys:
 			var parts: PackedStringArray = key.split(":")
 			var q := int(parts[1])
-			_text(Vector2(x, y), "%s  %s" % [Game.ORES[parts[0]].name, Game.Q_NAMES[q].to_lower()], 16, Game.ORES[parts[0]].color.lerp(UI.TEXT, 0.3))
+			_text(Vector2(x, y), ("%s  %s" % [Game.ORES[parts[0]].name, Game.q_tag(q).to_lower()]).strip_edges(), 16,
+				Game.ORES[parts[0]].color.lerp(UI.TEXT, 0.3))
 			_text(Vector2(x, y), "x%d" % Game.cargo[key], 16, Game.Q_COLORS[q].lerp(UI.TEXT, 0.3), HORIZONTAL_ALIGNMENT_RIGHT, w)
 			y += 22.0
 		if more > 0:

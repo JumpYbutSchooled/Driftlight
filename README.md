@@ -18,9 +18,9 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 
 | | |
 |---|---|
-| W / S | throttle up / down (it stays where you leave it) |
+| W / S | pitch the nose up / down |
 | A / D | turn |
-| R / F | pitch the nose up / down |
+| R / F | throttle up / down (it stays where you leave it) |
 | Q / E | roll |
 | X | brake, SHIFT boost |
 | Mouse | swing the camera round the ship (it doesn't steer) |
@@ -28,7 +28,10 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 | Right-click | select whatever is under the crosshair |
 | C (or hold ALT) | free the cursor to click rows on the Overview and things in space |
 | 1 / 2 / 3 | approach / orbit / warp to the selected thing |
-| G | jump through a gate, salvage, use; near a station, the docking autopilot |
+| 5 | cruise: a fast run to the selected thing, weaving round the asteroids |
+| G | salvage, use; near a station or stargate, the autopilot flies you into it |
+| O | auto-collect: the autopilot flies you from one loose chunk of ore to the next |
+| L | ship fitting: choose the weapon on each turret |
 | V | survey scan: see what's in the asteroids around you |
 | SPACE (hold) | quick warp menu |
 | M / N | galaxy map / system map |
@@ -39,8 +42,9 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 
 Ships are heavy: speed builds up and bleeds off over a few seconds, and turns carry momentum.
 To **dock**, fly into a station's docking bay and on to the landing pad at the back (warping to a
-station drops you out in front of the bay, lined up on it). Near a station, G hands it to the
-docking autopilot.
+station drops you out in front of the bay, lined up on it). **Stargates** are railguns pointed at
+the system they lead to: fly into the mouth and the coils fire you down the barrel into the jump.
+Near a station or gate, G hands it to the autopilot.
 
 ## Building it yourself
 

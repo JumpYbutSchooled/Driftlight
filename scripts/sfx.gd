@@ -1,6 +1,6 @@
 extends Node
 ## Synthesized sound effects, an engine rumble and the music, all generated in code.
-## Also owns the player settings (volumes, control style), saved to user://settings.cfg.
+## Also owns the player settings (volumes), saved to user://settings.cfg.
 ##
 ## Sounds are round and low: sine tones with a touch of their octave for body, and low rumbles, never
 ## buzzy saw or square waves.
@@ -30,7 +30,6 @@ const SCORE := [
 ]
 
 var volumes := {"Master": 0.8, "Music": 0.55, "SFX": 0.8}
-var hold_thrust := false  # false: W/S move a throttle lever. true: hold W to thrust, S to reverse.
 var _streams := {}
 var _players: Array[AudioStreamPlayer] = []
 var _next := 0
@@ -134,7 +133,6 @@ func save_settings() -> void:
 	var cfg := ConfigFile.new()
 	for k in volumes:
 		cfg.set_value("audio", k, volumes[k])
-	cfg.set_value("controls", "hold_thrust", hold_thrust)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -143,7 +141,6 @@ func _load_settings() -> void:
 	if cfg.load(SETTINGS_PATH) == OK:
 		for k in volumes:
 			volumes[k] = cfg.get_value("audio", k, volumes[k])
-		hold_thrust = cfg.get_value("controls", "hold_thrust", false)
 	for k in volumes:
 		set_volume(k, volumes[k])
 

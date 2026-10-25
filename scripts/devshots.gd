@@ -243,6 +243,35 @@ func _run() -> void:
 	main.survey_scan()
 	await _secs(0.5)
 	await _shot("03a_field_scan")
+	# 5: cruise right across the field to its far side, threading between the rocks
+	var far_rock = null
+	for a in get_tree().get_nodes_in_group("asteroids"):
+		var dd: float = a.position.distance_to(p.position)
+		if dd < 5500.0 and (far_rock == null or dd > far_rock.position.distance_to(p.position)):
+			far_rock = a
+	main.select(far_rock)
+	main.order("cruise")
+	var fastest := 0.0
+	var closest := INF
+	var shot_taken := false
+	Engine.time_scale = 4.0
+	var tc := Time.get_ticks_msec()
+	while main.autopilot.get("mode", "") == "cruise" and Time.get_ticks_msec() - tc < 40000:
+		await get_tree().process_frame
+		fastest = maxf(fastest, p.vel.length())
+		for a in get_tree().get_nodes_in_group("asteroids"):
+			closest = minf(closest, a.position.distance_to(p.position) - a.radius - p.radius)
+		if not shot_taken and p.vel.length() > p.top_speed() * 6.0:
+			shot_taken = true
+			Engine.time_scale = 1.0
+			await _shot("03g_cruise")
+			Engine.time_scale = 4.0
+	Engine.time_scale = 1.0
+	print("cruise: %.0f m/s top (normal %.0f), closest a rock came %.0f m, ended %.0f m from the target after %.1f s real (x4), autopilot %s" % [
+		fastest, p.top_speed(), closest, p.position.distance_to(far_rock.position) - far_rock.radius, (Time.get_ticks_msec() - tc) / 1000.0,
+		main.autopilot.get("mode", "off")])
+	await _secs(2.0)
+	print("after cruise: %.0f m/s" % p.vel.length())
 	var vein = main.overview_entries(20).filter(func(r): return not r.t is Dictionary and r.t.is_in_group("asteroids"))[0].t
 	main.select(vein)
 	main.order("approach")
@@ -281,6 +310,27 @@ func _run() -> void:
 		rock.hit(99999.0, -p.forward())
 	await _secs(0.35)
 	await _shot("03b_rock_burst")
+	# the overview filtered to ore of Normal quality or better
+	main.overview.cat = "ore"
+	main.overview.minq = 1
+	main.overview._refresh = 0.0
+	await _secs(0.4)
+	await _shot("03f_overview_filter")
+	print("overview filtered to ore, Normal+: %d rows" % main.overview._rows.size())
+	main.overview.cat = "all"
+	main.overview.minq = -1
+	# O: auto-collect flies round the loose ore, picking it all up
+	var cargo0 := Game.cargo_used()
+	var reach: int = get_tree().get_nodes_in_group("chunks").filter(
+		func(c): return c.position.distance_to(p.position) < main.COLLECT_RANGE).size()
+	main.toggle_collect()
+	Engine.time_scale = 6.0
+	t0 = Time.get_ticks_msec()
+	while main.autopilot.get("mode", "") == "collect" and Time.get_ticks_msec() - t0 < 40000:
+		await get_tree().process_frame
+	Engine.time_scale = 1.0
+	print("auto-collect: %d pieces in reach, cargo %d -> %d in %.1f s real (x6), autopilot now %s" % [reach, cargo0,
+		Game.cargo_used(), (Time.get_ticks_msec() - t0) / 1000.0, main.autopilot.get("mode", "off")])
 
 	# a fight in Wild space with every pirate type
 	var wild := _find(func(s, l): return s.cat == Game.CAT_PURPLE and l.kind == "planet" and l.ore)
@@ -452,5 +502,14 @@ func _run() -> void:
 	main.debug_ui.visible = true
 	await _secs(0.3)
 	await _shot("08_titan_f3")
+	main.debug = false
+	main.debug_ui.visible = false
+	main.mode = "fitting"
+	main.fitting.open()
+	main.fitting._pick_slot(2)
+	await _secs(1.2)
+	await _shot("10_fitting_titan")
+	print("fitting: %d turret rows for the %s" % [Game.loadout().size(), Game.SHIPS[Game.ship_id].name])
+	main.close_fitting()
 	print("audio peaks over the tour: music %.1f dB, sfx %.1f dB" % [_peaks.Music, _peaks.SFX])
 	get_tree().quit()

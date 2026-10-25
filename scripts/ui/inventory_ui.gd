@@ -159,7 +159,7 @@ func _build_cargo() -> void:
 		var q := int(parts[1])
 		var n: int = Game.cargo[key]
 		var ore: Dictionary = Game.ORES[parts[0]]
-		_add(UI.card("ore", ore.color, "%s  (%s)   x%d" % [ore.name, Game.Q_NAMES[q], n],
+		_add(UI.card("ore", ore.color, "%s   x%d" % [Game.ore_label(parts[0], q), n],
 			"Refines into %d %s.  %s" % [n * Game.Q_YIELD[q], ore.name, ore.desc], Game.Q_COLORS[q]),
 			[["Jettison", Game.jettison.bind(key)]])
 

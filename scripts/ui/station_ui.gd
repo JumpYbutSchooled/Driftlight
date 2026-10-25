@@ -185,7 +185,7 @@ func _side_text() -> String:
 		var parts: PackedStringArray = key.split(":")
 		var q := int(parts[1])
 		s += "[color=%s]%s[/color] [color=%s]%s[/color] x%d\n" % [UI.hex(Game.ORES[parts[0]].color),
-			Game.ORES[parts[0]].name, UI.hex(Game.Q_COLORS[q]), Game.Q_NAMES[q].substr(0, 3), Game.cargo[key]]
+			Game.ORES[parts[0]].name, UI.hex(Game.Q_COLORS[q]), Game.q_tag(q, true), Game.cargo[key]]
 	s += "\nProbes  %d" % Game.probes
 	return s
 
@@ -263,7 +263,7 @@ func _build_refinery() -> void:
 			var q := int(parts[1])
 			var n: int = Game.cargo[key]
 			var ore: Dictionary = Game.ORES[parts[0]]
-			_row("ore", ore.color, "%s  (%s)   x%d" % [ore.name, Game.Q_NAMES[q], n],
+			_row("ore", ore.color, "%s   x%d" % [Game.ore_label(parts[0], q), n],
 				"Smelts into [color=%s]%d %s[/color] in %s." % [UI.hex(ore.color), n * Game.Q_YIELD[q], ore.name,
 				_clock(Game.refine_time(parts[0], q) * n)], null, [["Load", _load.bind(key), true]], Game.Q_COLORS[q])
 	_update_furnace()
@@ -281,14 +281,15 @@ func _update_furnace() -> void:
 	else:
 		var cur: Array = r.queue[0]
 		var ore: Dictionary = Game.ORES[cur[0]]
-		_smelt_label.text = "%s (%s)  >  %d %s per piece" % [ore.name, Game.Q_NAMES[cur[1]], Game.Q_YIELD[cur[1]], ore.name]
+		_smelt_label.text = "%s  >  %d %s per piece" % [Game.ore_label(cur[0], cur[1]), Game.Q_YIELD[cur[1]], ore.name]
 		_smelt_bar.value = r.progress / Game.refine_time(cur[0], cur[1])
 		var lines := []
 		var left := 0
 		for item in r.queue:
 			left += item[2]
-			lines.append("[color=%s]%s[/color] [color=%s](%s)[/color] x%d" % [UI.hex(Game.ORES[item[0]].color),
-				Game.ORES[item[0]].name, UI.hex(Game.Q_COLORS[item[1]]), Game.Q_NAMES[item[1]], item[2]])
+			var tag := Game.q_tag(item[1])
+			lines.append("[color=%s]%s[/color] [color=%s]%s[/color] x%d" % [UI.hex(Game.ORES[item[0]].color),
+				Game.ORES[item[0]].name, UI.hex(Game.Q_COLORS[item[1]]), ("(%s)" % tag) if tag != "" else "", item[2]])
 		_queue_label.text = "[color=%s]Queue: %d pieces, %s left[/color]\n%s" % [UI.hex(UI.MUTED), left,
 			_clock(Game.refinery_seconds_left(r)), "   ".join(lines)]
 	if r.output.is_empty():
@@ -444,8 +445,8 @@ func _build_fabricator() -> void:
 				var owned: bool = Game.owned_ships.has(id)
 				_row("ship", s.colors[1], "%s  (%s)" % [s.name, s["class"]],
 					"%s\nHull %d   Shield %d   Speed %d   Turn %.1f   Cargo %d   Gun slots %d   Module slots %d" % [s.desc, s.hull,
-						s.shield, s.speed, s.turn, s.cargo, s.guns, s.modules], null if owned else s.cost,
-					[["Owned" if owned else "Build", _do_build.bind("ship", id, s.name, 1), not owned and Game.can_afford(s.cost)]],
+						s.shield, s.speed, s.turn, s.cargo, s.guns, s.modules], null if owned else Game.build_cost("ship", id),
+					[["Owned" if owned else "Build", _do_build.bind("ship", id, s.name, 1), not owned and Game.can_afford(Game.build_cost("ship", id))]],
 					Color("9fd3ff"))
 		"weapons":
 			for id in Game.WEAPON_ORDER:
@@ -453,14 +454,14 @@ func _build_fabricator() -> void:
 					continue
 				var w: Dictionary = Game.WEAPONS[id]
 				_row("weapon", w.color, "%s   (have %d)" % [w.name, Game.weapon_count(id)],
-					"%s\n%s\nOne build arms one gun slot." % [w.desc, _weapon_line(w)], w.cost,
-					[["Build", _do_build.bind("weapon", id, w.name, 1), Game.can_afford(w.cost)]], w.color)
+					"%s\n%s\nOne build arms one gun slot." % [w.desc, _weapon_line(w)], Game.build_cost("weapon", id),
+					[["Build", _do_build.bind("weapon", id, w.name, 1), Game.can_afford(Game.build_cost("weapon", id))]], w.color)
 		"modules":
 			for id in Game.MODULE_ORDER:
 				var m: Dictionary = Game.MODULES[id]
 				var have: int = Game.module_stock.get(id, 0) + Game.modules_equipped.count(id)
-				_row("module", Color("c9b6ff"), "%s   (have %d)" % [m.name, have], m.desc, m.cost,
-					[["Build", _do_build.bind("module", id, m.name, 1), Game.can_afford(m.cost)]], Color("c9b6ff"))
+				_row("module", Color("c9b6ff"), "%s   (have %d)" % [m.name, have], m.desc, Game.build_cost("module", id),
+					[["Build", _do_build.bind("module", id, m.name, 1), Game.can_afford(Game.build_cost("module", id))]], Color("c9b6ff"))
 		"supplies":
 			var five := {}
 			for k in Game.PROBE_COST:
@@ -471,7 +472,7 @@ func _build_fabricator() -> void:
 
 
 func _weapon_line(w: Dictionary) -> String:
-	var t := "Damage %.0f   %.1f/s   Mining %.1f   Range %d" % [w.damage, w.rate, w.mining, roundi(w.speed * w.life)]
+	var t := "Damage %.0f   %.1f/s   Mining %.1f" % [w.damage, w.rate, w.mining]
 	if w.get("pellets", 1) > 1:
 		t += "   %d pellets" % w.pellets
 	if w.get("pierce", 0) > 0:

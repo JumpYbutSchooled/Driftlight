@@ -6,7 +6,7 @@ signal notify(text: String, color: Color)
 signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 
-const VERSION := 2  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 3  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots. The admin one (everything free, jump anywhere, god mode) only opens on a device that has
 # the admin key file, tied to that machine (see admin_allowed).
@@ -23,6 +23,7 @@ const MINE_COST := 7.0  # mining power needed to split one ore off a Corrite roc
 const HARDNESS_PER_TIER := 0.2
 const REFINE_TIME := [0.8, 1.2, 2.0, 4.0]  # seconds to smelt one raw ore, by quality (rarer ores +12% per tier)
 const PROBE_COST := {"corrite": 4}
+const BUILD_COST_MULT := 4  # building ships, weapons and modules takes this many times the listed materials
 const PROBE_PRICE := 12  # credits, at a market
 const MARKET_MARKUP := 4.0  # ready-made gear costs this many times its materials' worth
 const MAX_MISSIONS := 4
@@ -43,9 +44,25 @@ const CAT_PRICE := [0.8, 1.0, 1.25, 1.5]  # market sell price multiplier
 const CAT_DANGER := [1.0, 1.0, 1.2, 1.5]  # pirate toughness multiplier
 
 const Q_NAMES := ["Inferior", "Normal", "Superior", "Pristine"]
+const Q_NORMAL := 1  # plain ore: shown by its name alone
+
+
+## An ore's name, with a noun ("vein", "ore") if given, and its quality in brackets unless it's Normal:
+## "Corrite vein", "Corrite vein (Pristine)".
+static func ore_label(id: String, q: int, noun := "") -> String:
+	var s: String = ORES[id].name + ((" " + noun) if noun != "" else "")
+	return s if q == Q_NORMAL else "%s (%s)" % [s, Q_NAMES[q]]
+
+
+## A quality tag for compact lists: "" for Normal, else e.g. "Pri".
+static func q_tag(q: int, short := false) -> String:
+	if q == Q_NORMAL:
+		return ""
+	return Q_NAMES[q].substr(0, 3) if short else Q_NAMES[q]
 const Q_YIELD := [1, 3, 5, 25]
 const Q_COLORS := [Color("8d8d8d"), Color("f0f0f0"), Color("ffd24a"), Color("74f7ff")]
-const Q_WEIGHTS := [[97, 3, 0, 0], [58, 35, 7, 0], [0, 72, 26, 2], [0, 52, 38, 10]]
+# ore quality odds by system category; Pristine ore is only ever found in the anomalies of Wild space
+const Q_WEIGHTS := [[97, 3, 0, 0], [58, 35, 7, 0], [0, 74, 26, 0], [0, 55, 45, 0]]
 const ANOMALY_Q_WEIGHTS := [0, 0, 40, 60]
 
 const ORE_ORDER := ["corrite", "ferrox", "lumenite", "cryonite", "vexium", "aurelite", "nyxium", "prismium"]
@@ -330,12 +347,13 @@ var gen_ms := 0
 
 
 func _ready() -> void:
-	_key("move_up", [KEY_W, KEY_UP])
-	_key("move_down", [KEY_S, KEY_DOWN])
+	# the user's layout: W/S pitch the nose, R/F work the throttle
+	_key("move_up", [KEY_R])
+	_key("move_down", [KEY_F])
 	_key("yaw_left", [KEY_A, KEY_LEFT])
 	_key("yaw_right", [KEY_D, KEY_RIGHT])
-	_key("pitch_up", [KEY_R])
-	_key("pitch_down", [KEY_F])
+	_key("pitch_up", [KEY_W, KEY_UP])
+	_key("pitch_down", [KEY_S, KEY_DOWN])
 	_key("roll_left", [KEY_Q])
 	_key("roll_right", [KEY_E])
 	_key("warp_menu", [KEY_SPACE])
@@ -355,6 +373,9 @@ func _ready() -> void:
 	_key("photo", [KEY_F1])
 	_key("admin", [KEY_F8])
 	_key("command", [KEY_C])
+	_key("collect", [KEY_O])
+	_key("cruise", [KEY_5])
+	_key("fitting", [KEY_L])
 	if not InputMap.has_action("fire"):
 		InputMap.add_action("fire")
 		var mb := InputEventMouseButton.new()
@@ -771,7 +792,7 @@ func roll_ore(sys: Dictionary, anomaly: bool) -> Array:
 		for t in range(1, w.size()):
 			w[t] = w[t] * (1.0 + sys.depth * t * 0.5)
 	var ore: String = ORE_ORDER[pick_weighted(w)]
-	var q := pick_weighted(ANOMALY_Q_WEIGHTS if anomaly else Q_WEIGHTS[sys.cat])
+	var q := pick_weighted(ANOMALY_Q_WEIGHTS if anomaly and sys.cat == CAT_PURPLE else Q_WEIGHTS[sys.cat])
 	return [ore, q]
 
 
@@ -946,7 +967,7 @@ func collect(key: String) -> Dictionary:
 
 func jettison(key: String) -> void:
 	var parts: PackedStringArray = key.split(":")
-	say("Jettisoned %d %s (%s)." % [cargo.get(key, 0), ORES[parts[0]].name, Q_NAMES[int(parts[1])]], Color("8a94a8"))
+	say("Jettisoned %d %s." % [cargo.get(key, 0), ore_label(parts[0], int(parts[1]))], Color("8a94a8"))
 	cargo.erase(key)
 	changed.emit()
 
@@ -981,12 +1002,19 @@ func buy(id: String, n: int) -> bool:
 	return true
 
 
+## What building something takes. The tables' material amounts are multiplied up by BUILD_COST_MULT:
+## anything worth having takes a lot of ore (probes stay cheap; spices aren't multiplied).
 func build_cost(kind: String, id: String) -> Dictionary:
+	var base: Dictionary
 	match kind:
-		"ship": return SHIPS[id].cost
-		"weapon": return WEAPONS[id].cost
-		"module": return MODULES[id].cost
-	return PROBE_COST
+		"ship": base = SHIPS[id].cost
+		"weapon": base = WEAPONS[id].cost
+		"module": base = MODULES[id].cost
+		_: return PROBE_COST
+	var out := {}
+	for k in base:
+		out[k] = base[k] * (BUILD_COST_MULT if ORES.has(k) else 1)
+	return out
 
 
 ## Building only ever costs materials (and sometimes spices) - never credits.

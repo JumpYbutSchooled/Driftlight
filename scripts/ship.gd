@@ -1,6 +1,6 @@
 extends Node3D
-## The player's ship in 3D. The keys swing its heading (main.aim: A/D turn, R/F pitch, Q/E roll) and the
-## ship turns to follow at its turn rate. W/S raise/lower the throttle, X brakes, SHIFT boosts. Each gun
+## The player's ship in 3D. The keys turn it (A/D turn, W/S pitch, Q/E roll, with momentum: see _turn).
+## R/F raise/lower the throttle, X brakes, SHIFT boosts. Each gun
 ## slot is a turret (on a pod, on the deck, under the keel or out on a flank, depending on the ship) that
 ## swings round on its own to track whatever the crosshair is on; a turret only fires once it's on target,
 ## within its arc, and with a clear line past your own hull: it has to be able to see the target.
@@ -15,7 +15,7 @@ const SPEED_MULT := 0.45  # top speeds are this fraction of the ship's speed sta
 const ACCEL := 0.22  # throttle response: fraction of top speed gained per second
 const DECEL := 0.3  # easing off the throttle sheds speed a little quicker
 const BRAKE := 0.6  # X
-const THROTTLE_RATE := 0.8  # throttle change per second while W/S is held
+const THROTTLE_RATE := 0.8  # throttle change per second while R/F is held
 const REVERSE_MAX := 0.35  # reverse thrust is weaker than forward
 const GRIP := 0.5  # how fast the flight computer damps sideways drift (times top speed, per second)
 const TURN_MULT := 0.45  # top turn rate (rad/s) is this times the ship's turn stat; rolling is quicker
@@ -24,6 +24,7 @@ const BOOST_MULT := 1.8
 const BOOST_DRAIN := 35.0  # energy per second
 const BOLT_SPEED_MULT := 2.5  # bolts fly this much faster than the weapon numbers say (over half the time: a bit more range)
 const FIRE_RATE_MULT := 1.5  # and the guns cycle this much quicker
+const BOLT_RANGE := 8000.0  # metres: every weapon reaches as far as you can see to aim
 const SHIELD_SHADER = preload("res://shaders/shield.gdshader")
 const PLUME_SHADER = preload("res://shaders/plume.gdshader")
 const NOZZLE_SHADER = preload("res://shaders/nozzle.gdshader")
@@ -65,10 +66,11 @@ var _slot_cd := []
 var _since_hit := 99.0
 var _since_boost := 99.0
 var _flash := 0.0
-var _detent := false  # throttle parked at 0 until W/S is released
+var _detent := false  # throttle parked at 0 until R/F is released
 var _bank := 0.0
 var turn_input := Vector3.ZERO  # from the keys (main._steer): x pitch, y yaw, z roll, each -1..1
 var ang_vel := Vector3.ZERO  # world-space angular velocity, rad/s
+var cruise_v := 0.0  # set by main's cruise autopilot: the speed to hold (0: not cruising)
 var _lights := []  # an engine light per nozzle, lighting the hull while it burns
 
 
@@ -211,6 +213,7 @@ func stop() -> void:
 	vel = Vector3.ZERO
 	throttle = 0.0
 	ang_vel = Vector3.ZERO
+	cruise_v = 0.0
 
 
 ## Cruising speed at full throttle, m/s.
@@ -258,17 +261,26 @@ func _process(delta: float) -> void:
 
 	_turn(delta)
 
-	var cruise := top_speed()
-	var top: float = cruise * (BOOST_MULT if boosting else 1.0)
+	var base := top_speed()
+	var top: float = base * (BOOST_MULT if boosting else 1.0)
 	var tgt := top if boosting else throttle * top
 	var fwd := forward()
 	var vf := vel.dot(fwd)
 	var lateral := vel - fwd * vf
-	var accel := cruise * (ACCEL * 2.0 if boosting else ACCEL)
+	var accel := base * (ACCEL * 2.0 if boosting else ACCEL)
 	if absf(tgt) < absf(vf) or signf(tgt) * signf(vf) < 0.0:
-		accel = cruise * (BRAKE if braking else DECEL)
+		accel = base * (BRAKE if braking else DECEL)
+	var grip := base * GRIP
+	if cruise_v > 0.0:
+		# cruising: the cruise drive holds a speed far above normal and the flight computer keeps the ship
+		# tracking its nose through the turns
+		tgt = cruise_v
+		accel = maxf(cruise_v * 0.5, base)
+		grip = cruise_v * 1.5
+	elif absf(vf) > top * 1.05:
+		accel = maxf(accel, absf(vf) * 1.2)  # out of cruise: the extra speed bleeds off in a couple of seconds
 	vf = move_toward(vf, tgt, accel * delta)
-	lateral = lateral.move_toward(Vector3.ZERO, cruise * GRIP * delta)
+	lateral = lateral.move_toward(Vector3.ZERO, grip * delta)
 	if main.mode != "warp":  # during a warp the warp sequence drives the ship
 		vel = fwd * vf + lateral
 	thrusting = absf(tgt) > 0.5 or main.travel.get("phase", "") in ["charge", "travel"]
@@ -349,14 +361,11 @@ func _turn(delta: float) -> void:
 		model.rotation.z = _bank
 
 
-## W/S move the throttle lever; it stops at 0% on the way down so it's easy to sit still. With
-## "hold to thrust" on, W is full throttle only while held and S is reverse.
+## R/F move the throttle lever; it stays where you leave it, and stops at 0% on the way down so it's
+## easy to sit still.
 func _update_throttle(delta: float) -> void:
 	var up := Input.is_action_pressed("move_up")
 	var down := Input.is_action_pressed("move_down")
-	if Sfx.hold_thrust:
-		throttle = 1.0 if up else (-REVERSE_MAX if down else 0.0)
-		return
 	if not up and not down:
 		_detent = false
 		return
@@ -375,7 +384,7 @@ func _update_throttle(delta: float) -> void:
 ## Plume length and brightness, nozzle glow, engine lights and the engine rumble, from the throttle.
 func _update_exhaust() -> void:
 	var warping: bool = main.travel.get("phase", "") == "travel"
-	var hot := boosting or warping
+	var hot := boosting or warping or cruise_v > 0.0
 	var power := 1.5 if hot else absf(throttle)
 	var col := Color(0.66, 0.84, 1.0) if hot else Color(0.5, 0.68, 1.0)
 	var burn: float = (minf(power, 1.0) * 0.85 + 0.15) if thrusting else 0.0
@@ -454,7 +463,8 @@ static func _segment_hits_box(a: Vector3, b: Vector3, h: Vector3) -> bool:
 
 ## The bolt a weapon fires from this ship: its numbers with ship/module/blessing bonuses applied, in 3D units.
 func shot(w: Dictionary) -> Dictionary:
-	return {"damage": w.damage * st.damage, "speed": w.speed * st.bolt * Game.WORLD_SCALE * BOLT_SPEED_MULT, "life": w.life * 0.5,
+	return {"damage": w.damage * st.damage, "speed": w.speed * st.bolt * Game.WORLD_SCALE * BOLT_SPEED_MULT,
+		"life": BOLT_RANGE / (w.speed * st.bolt * Game.WORLD_SCALE * BOLT_SPEED_MULT),
 		"mining": w.mining * st.mining, "color": w.color, "size": w.size, "pierce": w.get("pierce", 0),
 		"homing": w.get("homing", 0.0), "slow": w.get("slow", 0.0)}
 
