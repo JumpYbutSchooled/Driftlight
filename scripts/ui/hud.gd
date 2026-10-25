@@ -139,15 +139,19 @@ func _draw() -> void:
 
 	if prompt != "":
 		_text(Vector2(0, vs.y - 150), prompt, 22, UI.GOLD, HORIZONTAL_ALIGNMENT_CENTER, vs.x)
-	var keys := "W/S throttle   A/D turn   R/F pitch   Q/E roll   X brake   SHIFT boost   mouse aim   click fire   right-click select   1 approach   2 orbit   3 warp to   G use   V scan   SPACE warp   wheel zoom   middle-drag look   I cargo   N/M maps   F1 photo"
+	var keys := "W/S throttle   A/D turn   R/F pitch   Q/E roll   X brake   SHIFT boost   mouse look   click fire   right-click select   1 approach   2 orbit   3 warp to   G use   V scan   SPACE warp   C cursor   wheel zoom   middle-click recentre   I cargo   N/M maps   F1 photo"
 	_text(Vector2(0, vs.y - 20), keys, 14, Color(UI.MUTED, 0.75), HORIZONTAL_ALIGNMENT_CENTER, vs.x)
+	if main.command:
+		_text(Vector2(0, vs.y - 44), "CURSOR FREE  -  click to select  -  C or ESC for mouse look", 14, Color(UI.GOLD, 0.85),
+			HORIZONTAL_ALIGNMENT_CENTER, vs.x, UI.title)
 
 	if hover_text != "":
 		_text(Vector2(main.reticle.x - 400.0, main.reticle.y + 58.0), hover_text, 17, Color(UI.TEXT, 0.9), HORIZONTAL_ALIGNMENT_CENTER, 800.0)
 
 
-## The aiming reticle at the mouse, with a pip per gun under it: lit if that gun has a clear shot, dim red if
-## your own hull is in the way. A small ring marks where the ship's nose points.
+## The crosshair in the middle of the screen (the turrets aim at whatever it's on), with a pip per turret
+## under it: lit once that turret is on target with a clear shot, dim red if not (still swinging round, out
+## of its arc, or your own hull in the way). A small ring marks where the ship's nose points.
 func _draw_crosshair(_vs: Vector2) -> void:
 	var c: Vector2 = main.reticle.round()
 	var hostile: bool = main.aim_target != null and is_instance_valid(main.aim_target) and main.aim_target.is_in_group("pirates")
@@ -165,7 +169,7 @@ func _draw_crosshair(_vs: Vector2) -> void:
 			draw_circle(Vector2(gx, c.y + 24.0), 2.2, Color(0.75, 1.0, 0.85, 0.85) if guns[i] else Color(0.93, 0.4, 0.35, 0.45))
 			clear += 1 if guns[i] else 0
 		if clear == 0:
-			_text(Vector2(c.x - 150.0, c.y + 44.0), "hull in the way", 13, Color(0.93, 0.48, 0.42, 0.8), HORIZONTAL_ALIGNMENT_CENTER, 300.0)
+			_text(Vector2(c.x - 150.0, c.y + 44.0), "no turret can bear", 13, Color(0.93, 0.48, 0.42, 0.8), HORIZONTAL_ALIGNMENT_CENTER, 300.0)
 	var nose: Vector3 = p.position + p.forward() * 300.0
 	if not cam.is_position_behind(nose):
 		var n := cam.unproject_position(nose).round()

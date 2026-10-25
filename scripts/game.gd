@@ -316,7 +316,7 @@ var dirty := false  # something changed since the last save
 var playtime := 0.0
 var no_save := false  # set by the screenshot test so it never touches the player's save
 var save_path := SAVE_PATH
-var slot := "pilot"  # which save slot is in use
+var save_slot := "pilot"  # which save slot is in use
 var admin := false  # playing the admin slot
 var god := false  # admin: can't be hurt
 
@@ -354,6 +354,7 @@ func _ready() -> void:
 	_key("scan", [KEY_V])
 	_key("photo", [KEY_F1])
 	_key("admin", [KEY_F8])
+	_key("command", [KEY_C])
 	if not InputMap.has_action("fire"):
 		InputMap.add_action("fire")
 		var mb := InputEventMouseButton.new()
@@ -1406,7 +1407,7 @@ static func device_key() -> String:
 func use_slot(s: String) -> void:
 	if s == "admin" and not admin_allowed():
 		s = "pilot"
-	slot = s
+	save_slot = s
 	admin = s == "admin"
 	god = admin
 	if not no_save:

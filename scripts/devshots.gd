@@ -48,15 +48,25 @@ func _run() -> void:
 	await _secs(1.0)
 	var p = main.player
 	print("ship model: muzzles %d engines %d radius %.1f hull %s" % [p.muzzles.size(), p.engines.size(), p.radius, str(p.hull_box)])
-	# turn with the keys (A for two seconds); the reticle sits mid-screen
-	Input.warp_mouse(get_viewport().get_visible_rect().size / 2.0)
+	print("turrets %d" % p.turrets.size())
+	# turn with the keys (A for 1.5 seconds); the camera stays put, since only the mouse moves it
+	var cam_before: Basis = main.camera.global_basis
 	var before: Vector3 = p.forward()
 	Input.action_press("yaw_left")
 	await _secs(1.5)
 	Input.action_release("yaw_left")
 	await _secs(0.5)
-	print("keyboard turn: nose swung %.0f deg, %.1f deg off the heading" % [rad_to_deg(before.angle_to(p.forward())),
-		rad_to_deg(p.forward().angle_to(-main.aim.z))])
+	print("keyboard turn: nose swung %.0f deg, %.1f deg off the heading, camera turned %.1f deg" % [
+		rad_to_deg(before.angle_to(p.forward())), rad_to_deg(p.forward().angle_to(-main.aim.z)),
+		rad_to_deg((-cam_before.z).angle_to(-main.camera.global_basis.z))])
+	# the mouse swings the camera, not the ship
+	var mm := InputEventMouseMotion.new()
+	mm.relative = Vector2(-300, 0)
+	var nose: Vector3 = p.forward()
+	main._input(mm)
+	await _secs(0.3)
+	print("mouse look: camera yaw %.0f deg, ship turned %.1f deg" % [rad_to_deg(main._cam_yaw), rad_to_deg(nose.angle_to(p.forward()))])
+	main.snap_camera()
 	p.throttle = 0.6
 	await _secs(1.0)
 	await _shot("02_station")
@@ -65,6 +75,7 @@ func _run() -> void:
 	p.position = Vector3(780, 180, -1860)
 	main.aim = Basis.looking_at((Vector3(0, 60, 0) - p.position).normalized(), Vector3.UP)
 	p.basis = main.aim
+	main.snap_camera()
 	await _secs(0.8)
 	await _shot("02b_station_close")
 	# zoomed right out
@@ -104,12 +115,24 @@ func _run() -> void:
 	p.position = rock.position + Vector3(0, 4, rock.radius + 22.0)
 	main.aim = Basis.looking_at((rock.position - p.position).normalized(), Vector3.UP)
 	p.basis = main.aim
-	await _secs(0.4)
+	main.snap_camera()
+	await _secs(0.6)
 	Input.action_press("fire")
 	await _secs(1.6)
-	Input.action_release("fire")
-	print("rock after 1.6s of fire: %d / %d ore, chunks %d" % [rock.remaining, rock.total, get_tree().get_nodes_in_group("chunks").size()])
+	print("rock after 1.6s of fire: %d / %d ore, chunks %d, turrets ready %s" % [rock.remaining, rock.total,
+		get_tree().get_nodes_in_group("chunks").size(), str(p.guns_ready)])
 	await _shot("03_mining")
+	# close in on the guns while they fire: each beam should start at its barrel
+	main._zoom_to = 0.55
+	main.zoom = 0.55
+	main._cam_yaw += 0.5
+	main._cam_pitch -= 0.25
+	await _secs(0.5)
+	await _shot("03e_turrets_firing")
+	Input.action_release("fire")
+	main._zoom_to = 1.0
+	main.zoom = 1.0
+	main.snap_camera()
 	if is_instance_valid(rock):
 		rock.hit(99999.0, -p.forward())
 	await _secs(0.35)
@@ -148,6 +171,28 @@ func _run() -> void:
 	await _shot("04c_aftermath")
 	for e in get_tree().get_nodes_in_group("pirates"):
 		e.queue_free()
+	# look off to the side at a target there: the turrets swing round to it while the ship flies straight on
+	var side := Pirate.new()
+	side.main = main
+	side.position = p.position + main.aim.x * 80.0 + p.forward() * 10.0
+	main.world.add_child(side)
+	side.setup("raider", Game.CAT_PURPLE)
+	side.shot.damage = 0.0
+	side.speed = 0.0
+	for k in 2:  # twice: the camera moves round the ship as it turns, so aim again from where it ends up
+		var to_side: Vector3 = (side.position - main.camera.global_position).normalized()
+		main._cam_yaw = atan2(-to_side.x, -to_side.z)
+		main._cam_pitch = asin(clampf(to_side.y, -1.0, 1.0))
+		await _secs(0.6)
+	Input.action_press("fire")
+	await _secs(0.5)
+	print("side target: on it %s, turrets ready %s, ship turned %.1f deg" % [main.aim_target == side, str(p.guns_ready),
+		rad_to_deg(p.forward().angle_to(-main.aim.z))])
+	await _shot("04d_turrets_side")
+	Input.action_release("fire")
+	if is_instance_valid(side):
+		side.queue_free()
+	main.snap_camera()
 
 	# warp across a location with a station and an ore field, kilometres apart
 	p.heal_full()

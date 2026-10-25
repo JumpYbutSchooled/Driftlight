@@ -57,7 +57,7 @@ func setup(enemy_type: String, cat: int) -> void:
 	radius = maxf(size.x, size.z) * 0.5
 	_engine_col = Color("d080ff") if type == "sentinel" else Color("ff5a2a")
 	for m in muzzles:
-		var fq := Models.glow_quad(Color(Color(shot.color).lerp(Color.WHITE, 0.4), 0.9), 1.6 if data.has("boss") else 1.1)
+		var fq := Models.glow_quad(Color(Color(shot.color).lerp(Color.WHITE, 0.4), 0.9), 0.8 if data.has("boss") else 0.5)
 		fq.visible = false
 		m.add_child(fq)
 		_mflash.append(fq)

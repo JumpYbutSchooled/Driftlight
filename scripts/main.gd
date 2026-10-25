@@ -2,10 +2,12 @@ extends Node3D
 ## Runs the 3D game: title screen, building each location, the mouse-aim camera, warping and gates,
 ## saving, and all the UI.
 ##
-## Controls: W/S throttle, A/D turn, R/F pitch, Q/E roll, SHIFT boost, X brake. The mouse moves a free
-## aiming reticle and left click fires at it (a gun whose shot would pass through your own hull won't
-## fire). Right-click selects what's under the reticle; with something selected 1 approaches, 2 orbits,
-## 3 warps to it and G docks / jumps / uses it. Mouse wheel zooms, middle-drag looks around.
+## Controls: W/S throttle, A/D turn, R/F pitch, Q/E roll, SHIFT boost, X brake. The mouse swings the
+## camera round the ship (it never steers); the gun turrets swivel to whatever the crosshair in the middle
+## of the screen is on, and left click fires (a turret whose shot would pass through your own hull won't).
+## Right-click selects what's under the crosshair; with something selected 1 approaches, 2 orbits, 3 warps
+## to it and G docks / jumps / uses it. C frees the cursor (or hold ALT), wheel zooms, middle-click
+## puts the camera back behind the ship.
 ## F1 is photo mode: the UI hides, the action freezes and you fly a free camera (P saves a picture).
 ##
 ## Space is big: things at one location are kilometres apart (warp between them with F), stations are
@@ -110,7 +112,8 @@ var landmarks := []  # every notable thing at this location: {name, kind, icon, 
 var obstacles := []  # big structures ships bump off (see push_out)
 var selected = null  # the selected target: a node (rock, ship, crate) or a landmark dictionary
 var autopilot := {}  # approach / orbit / use in progress: {mode, target, range, axis}
-var reticle := Vector2.ZERO  # where the mouse aims, on screen
+var reticle := Vector2.ZERO  # where the guns aim, on screen (the centre)
+var command := false  # C: cursor freed to click the overview, target buttons and things in space (or hold ALT)
 var zoom := 1.0
 var overview
 var target_panel
@@ -118,9 +121,8 @@ var warp_fx
 var _zoom_to := 1.0
 var sun_dir_world := Vector3.UP  # towards this system's sun
 var _scan_cd := 0.0
-var _cam_basis := Basis()  # the camera's smoothed copy of the ship's facing
-var _look_yaw := 0.0  # middle-drag look-around offset
-var _look_pitch := 0.0
+var _cam_yaw := 0.0  # the camera orbits the ship by these (world space, set by the mouse)
+var _cam_pitch := 0.0
 var ui_layer: CanvasLayer
 var vignette_layer: CanvasLayer
 var photo := false  # F1 photo mode
@@ -352,14 +354,16 @@ func _process(delta: float) -> void:
 		return
 	_update_camera(delta)
 	_update_screen_fx(delta)
-	# flying, the mouse moves a free aiming reticle (the OS cursor, hidden and kept inside the window); the
-	# warp menu reads raw mouse movement, so it captures the mouse instead
+	# flying, the mouse is captured and swings the camera round the ship; C (or holding ALT) frees the
+	# cursor to click things. The warp menu reads raw mouse movement, so it captures the mouse too.
+	if command and not mode in ["fly", "warp"]:
+		command = false
 	var want_mouse := Input.MOUSE_MODE_VISIBLE
 	if not get_tree().paused:
 		if warp_menu.visible:
 			want_mouse = Input.MOUSE_MODE_CAPTURED
-		elif mode in ["fly", "warp", "dead"]:
-			want_mouse = Input.MOUSE_MODE_CONFINED_HIDDEN
+		elif mode in ["fly", "warp", "dead"] and not cursor_free():
+			want_mouse = Input.MOUSE_MODE_CAPTURED
 	if Input.mouse_mode != want_mouse:
 		Input.mouse_mode = want_mouse
 	set_cursor("arrow" if want_mouse == Input.MOUSE_MODE_VISIBLE else "dot")
@@ -429,17 +433,20 @@ func _steer(delta: float) -> void:
 	aim = aim.rotated((-aim.z).normalized(), roll * rate * delta).orthonormalized()
 
 
-## Is the mouse over a clickable panel (so a click there doesn't also fire the guns)?
-func pointer_on_ui() -> bool:
-	var mp := get_viewport().get_mouse_position()
-	for c in [overview, target_panel]:
-		if c.visible and c.get_global_rect().has_point(mp):
-			return true
-	return false
+## Is the cursor freed for clicking (C toggles it, holding ALT frees it for a moment)?
+func cursor_free() -> bool:
+	return command or (mode in ["fly", "warp"] and Input.is_key_pressed(KEY_ALT))
 
 
-## Chase camera behind and above the ship, following the way it faces (middle-drag looks around; it
-## eases back when you let go). On the title screen it slowly circles the station instead.
+## Put the camera straight behind the ship (on arrival, and on a middle-click).
+func snap_camera() -> void:
+	var f: Vector3 = (-aim.z).normalized()
+	_cam_yaw = atan2(-f.x, -f.z)
+	_cam_pitch = asin(clampf(f.y, -1.0, 1.0))
+
+
+## Chase camera that orbits the ship as you move the mouse; the ship itself is flown with the keys.
+## On the title screen it slowly circles the station instead.
 func _update_camera(delta: float) -> void:
 	if mode == "title":
 		_title_t += delta * 0.05
@@ -451,12 +458,7 @@ func _update_camera(delta: float) -> void:
 	# mouse wheel zoom: from right behind the ship out to a kilometre or so
 	zoom = lerpf(zoom, _zoom_to, 1.0 - exp(-8.0 * delta))
 	camera.near = clampf(zoom * 0.12, 0.3, 6.0)
-	var follow: Quaternion = player.global_transform.basis.orthonormalized().get_rotation_quaternion()
-	_cam_basis = Basis(_cam_basis.get_rotation_quaternion().slerp(follow, 1.0 - exp(-7.0 * delta)))
-	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
-		_look_yaw = lerpf(_look_yaw, 0.0, 1.0 - exp(-3.0 * delta))
-		_look_pitch = lerpf(_look_pitch, 0.0, 1.0 - exp(-3.0 * delta))
-	var view := _cam_basis * Basis(Vector3.UP, _look_yaw) * Basis(Vector3.RIGHT, _look_pitch)
+	var view := Basis(Vector3.UP, _cam_yaw) * Basis(Vector3.RIGHT, _cam_pitch)
 	var r: float = player.radius
 	var target: Vector3 = player.position + (view.y * (r * 0.75 + 2.0) + view.z * (r * 2.4 + 7.0)) * zoom
 	if not player.alive:
@@ -475,10 +477,10 @@ func _update_camera(delta: float) -> void:
 	camera.fov = lerpf(camera.fov, FOV + speed_fov + warp_fov + _fov_kick, 1.0 - exp(-4.0 * delta))
 
 
-## What the reticle (the mouse) is on: the nearest rock, pirate, crate or ship along its ray from the camera.
+## What the crosshair (the middle of the screen) is on: the nearest rock, pirate, crate or ship along the
+## camera's line of sight. The turrets aim there.
 func _aim_raycast() -> void:
-	var vs := get_viewport().get_visible_rect().size
-	reticle = get_viewport().get_mouse_position() if mode == "fly" else vs / 2.0
+	reticle = get_viewport().get_visible_rect().size / 2.0
 	var o := camera.project_ray_origin(reticle)
 	var d := camera.project_ray_normal(reticle)
 	var best := 6000.0
@@ -514,10 +516,11 @@ func _input(event: InputEvent) -> void:
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				_photo_fov = clampf(_photo_fov * 1.08, 8.0, 110.0)
 		return
-	# middle-drag: look around the ship
-	if event is InputEventMouseMotion and mode in ["fly", "warp"] and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
-		_look_yaw = wrapf(_look_yaw - event.relative.x * MOUSE_SENS * 1.5, -PI, PI)
-		_look_pitch = clampf(_look_pitch - event.relative.y * MOUSE_SENS * 1.5, -1.3, 1.3)
+	# the mouse swings the camera round the ship (it never steers it)
+	if event is InputEventMouseMotion and mode in ["fly", "warp", "dead"] and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED \
+			and not warp_menu.visible:
+		_cam_yaw = wrapf(_cam_yaw - event.relative.x * MOUSE_SENS, -PI, PI)
+		_cam_pitch = clampf(_cam_pitch - event.relative.y * MOUSE_SENS, -1.45, 1.45)
 
 
 ## Closes the quick warp menu and warps to whatever is highlighted (nothing, if it's Cancel).
@@ -561,11 +564,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_WHEEL_DOWN:
 				_zoom_to = clampf(_zoom_to * 1.15, ZOOM_MIN, ZOOM_MAX)
 				return
-			MOUSE_BUTTON_RIGHT:
-				var t = pick_at(event.position)  # right-click selects what's under the reticle
+			MOUSE_BUTTON_MIDDLE:
+				snap_camera()
+				return
+			MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_LEFT:
+				# right-click selects what's under the crosshair (or under the cursor, once C has freed it);
+				# with the cursor free a left click selects too, instead of firing
+				if event.button_index == MOUSE_BUTTON_LEFT and not cursor_free():
+					return
+				var t = pick_at(event.position if cursor_free() else reticle)
 				if t != null:
 					select(t)
 				return
+	if event.is_action_pressed("command") and mode in ["fly", "warp"]:
+		command = not command
+		return
+	if event.is_action_pressed("close") and command:
+		command = false
+		return
 	if mode == "fly":
 		for o in ["approach", "orbit", "warp_to"]:
 			if event.is_action_pressed(o):
@@ -791,7 +807,7 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 	player.basis = aim
 	player.stop()
 	camera.global_position = player.position + aim.y * 6.0 + aim.z * 18.0 * zoom
-	_cam_basis = aim
+	snap_camera()
 	_wormhole_armed = false
 
 	if loc.pirates:
@@ -1585,32 +1601,35 @@ func survey_scan() -> void:
 
 # ---------------------------------------------------------------- spawning helpers
 
-var _bolt_meshes := {}
+const LASER_SHADER = preload("res://shaders/laser.gdshader")
+var _laser_mats := {}
+
+
+## A laser material per bolt colour.
+func _laser_mat(color: Color) -> ShaderMaterial:
+	if not _laser_mats.has(color):
+		var m := ShaderMaterial.new()
+		m.shader = LASER_SHADER
+		m.set_shader_parameter("color", color)
+		_laser_mats[color] = m
+	return _laser_mats[color]
 
 
 func spawn_bullet(pos: Vector3, dir: Vector3, s: Dictionary, friendly: bool) -> void:
 	var b := Bullet.new()
 	b.main = self
-	var key := "%s:%s" % [s.size, s.color.to_html()]
-	if not _bolt_meshes.has(key):
-		var bm := BoxMesh.new()
-		bm.size = Vector3(s.size.x * 0.12, s.size.x * 0.12, s.size.y * 0.32)
-		bm.material = Models.bright_mat(s.color, 6.0)
-		_bolt_meshes[key] = bm
-	var mi := MeshInstance3D.new()
-	mi.mesh = _bolt_meshes[key]
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	b.add_child(mi)
-	b.add_child(Models.glow_quad(Color(s.color, 0.5), s.size.y * 0.35))
-	# a fading streak of light trailing the bolt
-	var tail := MeshInstance3D.new()
-	var tail_len: float = s.size.y * (2.6 if friendly else 1.1)  # player bolts are fast: longer streaks
-	tail.material_override = _tail_mat(s.color)
-	tail.rotation.x = PI / 2.0
-	tail.mesh = Models.streak_mesh(s.size.x * 0.3, tail_len)
-	tail.position.z = tail_len * 0.5
-	tail.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	b.add_child(tail)
+	# the beam: a white-hot core in a coloured glow, laid back from the bolt's head; it starts at nothing
+	# and grows out of the muzzle as the bolt flies (bullet._stretch)
+	var beam := MeshInstance3D.new()
+	beam.mesh = Models.streak_mesh(1.0, 1.0)
+	beam.material_override = _laser_mat(s.color)
+	beam.rotation.x = -PI / 2.0  # the mesh's head end (+Y) points forward (-Z)
+	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	b.add_child(beam)
+	b.beam = beam
+	b.beam_width = s.size.x * 0.4
+	b.beam_len = s.size.y * (3.0 if friendly else 1.8)  # player bolts are fast: longer beams
+	b.add_child(Models.glow_quad(Color(Color(s.color).lerp(Color.WHITE, 0.3), 0.5), s.size.x * 0.35))  # a tight hot spot at the head
 	b.vel = dir * s.speed
 	b.life = s.life * (player.st.bolt if friendly else 1.0)
 	b.damage = s.damage
@@ -1623,17 +1642,6 @@ func spawn_bullet(pos: Vector3, dir: Vector3, s: Dictionary, friendly: bool) -> 
 	world.add_child(b)
 	b.global_position = pos
 	b.look_at(pos + dir, Vector3.UP if absf(dir.y) < 0.99 else Vector3.RIGHT)
-
-
-var _tail_mats := {}
-
-
-func _tail_mat(color: Color) -> StandardMaterial3D:
-	if not _tail_mats.has(color):
-		var m: StandardMaterial3D = Models.streak_mat().duplicate()
-		m.albedo_color = Color(color.lerp(Color.WHITE, 0.2), 0.6)
-		_tail_mats[color] = m
-	return _tail_mats[color]
 
 
 func spawn_chunk(ore: String, q: int, amount: int, pos: Vector3, vel: Vector3) -> void:

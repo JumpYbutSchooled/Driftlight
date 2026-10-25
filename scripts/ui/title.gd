@@ -4,9 +4,9 @@ extends Control
 const UI = preload("res://scripts/ui/ui.gd")
 const HELP := """[font_size=20][color=#ffe7a3][b]HOW TO PLAY[/b][/color][/font_size]
 
-[color=#9fd3ff]Flying[/color]   The keys fly the ship: A / D turn, R / F pitch the nose up and down, Q / E roll.  W / S raise and lower the throttle (it stays where you leave it, and stops at 0 before reverse).  Hold X to brake.  SHIFT boosts while you have energy.  Middle-drag the mouse to look around.  Prefer holding W to thrust? Switch it in the ESC menu.
-[color=#9fd3ff]Shooting[/color]   The mouse moves your aiming reticle anywhere on screen; click to fire at it. A gun can only fire if it can see the target: the pips under the reticle show which guns are clear, and a gun whose shot would pass through your own hull stays quiet, so turn the ship to bring more guns to bear.
-[color=#9fd3ff]Space is big[/color]   Things at one place are kilometres apart. The OVERVIEW (top right) lists everything nearby: click a row to select it, or right-click whatever's under the reticle. Then 1 approaches it, 2 orbits it, 3 warps you across to it and G docks / jumps / uses it. Mouse wheel zooms the camera right out.
+[color=#9fd3ff]Flying[/color]   The keys fly the ship: A / D turn, R / F pitch the nose up and down, Q / E roll.  W / S raise and lower the throttle (it stays where you leave it, and stops at 0 before reverse).  Hold X to brake.  SHIFT boosts while you have energy.  The mouse swings the camera round your ship without steering it; middle-click puts it back behind you.  Prefer holding W to thrust? Switch it in the ESC menu.
+[color=#9fd3ff]Shooting[/color]   Your guns are turrets that swivel on their own toward whatever the crosshair in the middle of the screen is on; click to fire. Each turret can only fire once it's pointing at the target with a clear shot: the pips under the crosshair show which are ready, and one whose shot would pass through your own hull stays quiet, so turn the ship to bring more turrets to bear.
+[color=#9fd3ff]Space is big[/color]   Things at one place are kilometres apart. The OVERVIEW (top right) lists everything nearby: press C to free the cursor and click a row to select it, or right-click whatever's under the crosshair (holding ALT frees the cursor for a moment too). Then 1 approaches it, 2 orbits it, 3 warps you across to it and G docks / jumps / uses it. Mouse wheel zooms the camera right out.
 [color=#9fd3ff]Mining[/color]   Ore fields are full of huge veins. Press V to survey them and see what's inside. Shoot a vein and chunks of ore break off the side you hit; they stay where they stop, so fly into them to collect them. Rarer ores are harder to break. Load ore into a station furnace; it smelts piece by piece over time, even while you're away.
 [color=#9fd3ff]Travel[/color]   Hold SPACE for the quick warp menu, move the mouse up/down to pick a destination and let go of SPACE to warp (or pick Cancel). Your ship turns to face it, charges the drive, then flies the warp tunnel. ESC or X cancels until the jump starts. F11 toggles fullscreen. Stargates lead to other systems. M opens the galaxy map (click a system to plot a route). N opens the system map, where you launch probes to scan planets and hunt anomalies.
 [color=#9fd3ff]Danger[/color]   [color=#4aa8ff]Core[/color] systems are safe. [color=#4cd964]Secure[/color] ones have a few pirates. [color=#ff5050]Unsecure[/color] ones have no stations. [color=#b366ff]Wild[/color] space - the biggest part of the galaxy - is crawling with pirates, but hides anomalies full of Pristine ore and wormholes.
@@ -81,7 +81,7 @@ func _menu_button(text: String, cb: Callable, _icon: String) -> Button:
 
 func open() -> void:
 	_slots.visible = Game.admin_allowed()
-	_pick_slot(Game.slot)
+	_pick_slot(Game.save_slot)
 	_help.hide()
 	show()
 
@@ -90,7 +90,7 @@ func open() -> void:
 func _pick_slot(s: String) -> void:
 	Game.use_slot(s)
 	for k in _slot_btns:
-		_slot_btns[k].set_pressed_no_signal(k == Game.slot)
+		_slot_btns[k].set_pressed_no_signal(k == Game.save_slot)
 	_continue.visible = Game.has_save()
 
 

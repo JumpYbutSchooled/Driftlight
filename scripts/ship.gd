@@ -1,8 +1,9 @@
 extends Node3D
 ## The player's ship in 3D. The keys swing its heading (main.aim: A/D turn, R/F pitch, Q/E roll) and the
-## ship turns to follow at its turn rate. W/S raise/lower the throttle, X brakes, SHIFT boosts. Guns fire
-## from the model's muzzles toward whatever the mouse reticle is on, but a gun can't fire through your own
-## hull: it has to be able to see the target.
+## ship turns to follow at its turn rate. W/S raise/lower the throttle, X brakes, SHIFT boosts. Each gun
+## slot is a turret on a gun pod that swings round on its own to track whatever the crosshair is on; a
+## turret only fires once it's on target, within its elevation limits, and with a clear line past your
+## own hull: it has to be able to see the target.
 ##
 ## Flight model: the ship "grips" space, so sideways drift dies off quickly and you go where the nose
 ## points; slowing down is quicker than speeding up.
@@ -14,6 +15,11 @@ const BOOST_MULT := 1.8
 const BOOST_DRAIN := 35.0  # energy per second
 const BOLT_SPEED_MULT := 2.5  # bolts fly this much faster than the weapon numbers say (over half the time: a bit more range)
 const FIRE_RATE_MULT := 1.5  # and the guns cycle this much quicker
+const TURRET_YAW_SPEED := 3.2  # radians per second a turret swings round
+const TURRET_PITCH_SPEED := 2.4  # and raises / lowers its barrels
+const TURRET_PITCH_MIN := -0.3  # barrels can dip a little below the pod top...
+const TURRET_PITCH_MAX := 1.45  # ...and nearly straight up
+const TURRET_ON_TARGET := 0.05  # radians: how close to the target a barrel must point to fire
 const SHIELD_SHADER = preload("res://shaders/shield.gdshader")
 const PLUME_SHADER = preload("res://shaders/plume.gdshader")
 const Fx = preload("res://scripts/fx.gd")
@@ -31,7 +37,8 @@ var control := true
 var alive := true
 var radius := 4.0
 var thrusting := false
-var muzzles := []  # Node3D markers, one per gun slot (front-left, front-right, ...)
+var muzzles := []  # the turrets' barrel tips, one per gun slot (front-left, front-right, ...)
+var turrets := []  # per gun slot: {base, yaw, pitch, muzzle} nodes of its turret
 var engines := []
 var guns_ready := []  # per gun: can it fire at the aim point right now (for the debug screen)
 var hull_box := Vector3(5, 1.6, 6)  # width, height, length of the hull itself
@@ -92,9 +99,18 @@ func _build_model() -> void:
 		t.queue_free()
 	model = Models.ship(Game.ship_id)
 	add_child(model)
-	muzzles = Models.markers(model, "Muzzle")
 	engines = Models.markers(model, "Engine")
 	hull_box = Models.hull(Game.ship_id)
+	# a turret on every gun mount, sized to the ship's pods
+	turrets = []
+	var tscale := clampf(hull_box.y * 0.42 / 0.85, 0.9, 2.4)
+	for mount in Models.markers(model, "Gun"):
+		var t := Models.prop("turret")
+		t.scale = Vector3.ONE * tscale
+		mount.add_child(t)
+		turrets.append({"base": t, "yaw": t.find_child("Yaw", true, false), "pitch": t.find_child("Pitch", true, false),
+			"muzzle": t.find_child("Muzzle", true, false)})
+	muzzles = turrets.map(func(tu): return tu.muzzle)
 	var size := Models.size(Game.ship_id)
 	radius = maxf(size.x, size.z) * 0.45
 	_shield_mesh.scale = Vector3(size.x * 0.62, maxf(size.y * 1.4, size.x * 0.3), size.z * 0.62)
@@ -243,14 +259,12 @@ func _physics_process(delta: float) -> void:
 	_collide_rocks()
 
 	var aim_pt: Vector3 = main.aim_point
-	guns_ready = []
-	for m in muzzles:
-		guns_ready.append(can_fire(m, aim_pt))
+	_aim_turrets(delta, aim_pt)
 	_fire_cd = INF
 	for i in _slot_cd.size():
 		_slot_cd[i] = maxf(0.0, _slot_cd[i] - delta)
 		_fire_cd = minf(_fire_cd, _slot_cd[i])
-	if control and not main.pointer_on_ui() and Input.is_action_pressed("fire"):
+	if control and not main.cursor_free() and Input.is_action_pressed("fire"):
 		fire_at(aim_pt)
 
 	_since_hit += delta
@@ -337,6 +351,28 @@ func _collide_rocks() -> void:
 				vel -= n * vn * 1.25
 
 
+## Swing every turret toward `target` (yaw on its base, then barrel pitch) and work out which can fire:
+## on target, within its elevation limits, and with a clear line past the hull.
+func _aim_turrets(delta: float, target: Vector3) -> void:
+	guns_ready = []
+	for tu in turrets:
+		var base: Node3D = tu.base
+		var yaw_node: Node3D = tu.yaw
+		var pitch_node: Node3D = tu.pitch
+		var local: Vector3 = base.global_transform.affine_inverse() * target
+		var want_yaw := atan2(-local.x, -local.z)  # the barrels point down -Z
+		yaw_node.rotation.y = rotate_toward(yaw_node.rotation.y, want_yaw, TURRET_YAW_SPEED * delta)
+		var lp: Vector3 = yaw_node.global_transform.affine_inverse() * target - pitch_node.position
+		var want_pitch := atan2(lp.y, Vector2(lp.x, lp.z).length())
+		var reachable := want_pitch >= TURRET_PITCH_MIN and want_pitch <= TURRET_PITCH_MAX
+		pitch_node.rotation.x = rotate_toward(pitch_node.rotation.x, clampf(want_pitch, TURRET_PITCH_MIN, TURRET_PITCH_MAX),
+			TURRET_PITCH_SPEED * delta)
+		var mz: Vector3 = tu.muzzle.global_position
+		var barrel := (-pitch_node.global_basis.z).normalized()
+		var on_target := barrel.dot((target - mz).normalized()) > cos(TURRET_ON_TARGET)
+		guns_ready.append(reachable and on_target and can_fire(tu.muzzle, target))
+
+
 ## Can the gun at `muzzle` hit `aim` without its shot passing through the hull box?
 func can_fire(muzzle: Node3D, aim: Vector3) -> bool:
 	var inv := global_transform.affine_inverse()
@@ -378,7 +414,7 @@ func fire_at(aim: Vector3) -> int:
 	var fired := 0
 	var spread_shot := false
 	for i in muzzles.size():
-		if _slot_cd[i] > 0.0 or not can_fire(muzzles[i], aim):
+		if _slot_cd[i] > 0.0 or i >= guns_ready.size() or not guns_ready[i]:
 			continue
 		var w: Dictionary = Game.WEAPONS[loadout[i] if i < loadout.size() else Game.BLASTER]
 		var s := shot(w)
@@ -394,7 +430,7 @@ func fire_at(aim: Vector3) -> int:
 		_slot_cd[i] = 1.0 / (w.rate * st.fire * FIRE_RATE_MULT)
 		_mflash_t[i] = 1.0
 		_mflash[i].material_override = Models.glow_mat(Color(Color(w.color).lerp(Color.WHITE, 0.5), 0.9))
-		_mflash[i].mesh.size = Vector2.ONE * (1.4 + Vector2(w.size).x * 0.35)
+		_mflash[i].mesh.size = Vector2.ONE * (0.35 + Vector2(w.size).x * 0.1)  # a small, sharp flash at the barrels
 		spread_shot = spread_shot or pellets > 1
 		fired += 1
 	if fired > 0:

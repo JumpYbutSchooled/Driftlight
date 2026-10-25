@@ -2,8 +2,14 @@ extends Node3D
 ## A bolt in 3D. Friendly bolts mine rocks, break crates and hit pirates; pirate bolts hit the player.
 ## Hits are checked along the whole path travelled each frame, so fast bolts can't skip through things.
 ## Optional: pierce (passes through targets), homing (curves toward pirates), slow (freezes pirates).
+## The visible beam grows out of the muzzle as the bolt flies (up to its full length), so none of it ever
+## shows behind the gun that fired it.
 
 var main
+var beam: MeshInstance3D  # the laser beam mesh, stretched back from the bolt's head (set by main.spawn_bullet)
+var beam_len := 10.0  # full length of the beam, metres
+var beam_width := 0.6
+var _travelled := 0.0
 var vel := Vector3.ZERO
 var life := 1.2
 var damage := 5.0
@@ -33,6 +39,8 @@ func _physics_process(delta: float) -> void:
 	if life <= 0.0:
 		queue_free()
 		return
+	_travelled += vel.length() * delta
+	_stretch()
 	for a in get_tree().get_nodes_in_group("asteroids"):
 		if _crosses(from, a.position, a.radius):
 			var n: Vector3 = (from - a.position).normalized()
@@ -55,6 +63,15 @@ func _physics_process(delta: float) -> void:
 		if pl.alive and _crosses(from, pl.position, pl.radius * 0.8):
 			pl.take_damage(damage, position)
 			_impact(null)
+
+
+## Lay the beam back from the head, only as far as the bolt has actually travelled.
+func _stretch() -> void:
+	if beam == null:
+		return
+	var length := clampf(_travelled, 0.05, beam_len)
+	beam.scale = Vector3(beam_width, length, beam_width)
+	beam.position = Vector3(0, 0, length * 0.5)
 
 
 ## Did this frame's path (from -> current position) pass within r of c?

@@ -102,16 +102,16 @@ func _unpack() -> String:
 	DirAccess.make_dir_recursive_absolute(stage)
 	var got_pack := false
 	for path in zr.get_files():
-		var name := path.get_file()
-		if name == "":
+		var fname := path.get_file()
+		if fname == "":
 			continue  # a folder entry
-		var f := FileAccess.open(stage.path_join(name), FileAccess.WRITE)
+		var f := FileAccess.open(stage.path_join(fname), FileAccess.WRITE)
 		if f == null:
 			zr.close()
 			return "can't write the update"
 		f.store_buffer(zr.read_file(path))
 		f.close()
-		got_pack = got_pack or name.to_lower().ends_with(".pck")
+		got_pack = got_pack or fname.to_lower().ends_with(".pck")
 	zr.close()
 	return "" if got_pack else "no game data in the download"
 

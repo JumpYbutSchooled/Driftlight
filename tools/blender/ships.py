@@ -4,8 +4,9 @@ Run:  blender --background --python ships.py [-- ship_id ...]
 
 Player ships are built from the same shape numbers the game uses (Game.SHIPS: body size, gap to the gun
 pods, pod size, gun count, stripe style, colours), so a ship keeps its identity from the 2D version:
-a boxy hull with gun pods spaced down both sides. Each model carries empties named Muzzle_N (in gun-slot
-order: front-left, front-right, second-left, ...) and Engine_N, which the game reads.
+a boxy hull with gun pods spaced down both sides. Each player ship carries empties named Gun_N (turret
+mounts, in gun-slot order: front-left, front-right, second-left, ...) and Engine_N; pirates carry fixed
+Muzzle_N guns instead. turret.glb is the moving gun turret the game sets on every Gun_N mount.
 """
 import json
 import math
@@ -308,11 +309,12 @@ def player_ship(sid):
         spin(dish, "Z", 240)
 
 
-    # gun pods: half the gun slots on each side, evenly spaced from the front
+    # gun pods: half the gun slots on each side, evenly spaced from the front. Each carries a turret mount
+    # (Gun_N): the game puts a moving turret there (turret.glb)
     per_side = max(1, guns // 2)
-    pw, pl, ph = 1.1, pod * U, H * 0.55
+    pw, pl, ph = max(1.1, H * 0.42), pod * U, H * 0.55
     px = W / 2 + gap * U + pw / 2
-    blen = pl * 0.8
+    blen = 0.0
     muzzles = []
     for k in range(per_side):
         y = L / 2 - (k + 0.5) * L / per_side
@@ -325,17 +327,10 @@ def player_ship(sid):
             plated("strut", (sl, 0.55, ph * 0.38), (sx * (W / 2 + gap * U / 2 - 0.05), y, 0), [dark, seam, greeb], body,
                    cell=0.3, rng=rng, depth=0.02, seam=0.02)
             box("strut_pipe", (sl, 0.1, 0.1), (sx * (W / 2 + gap * U / 2 - 0.05), y - 0.38, ph * 0.12), gunm, 0.0, parent=body)
-            box("ammo", (pw * 0.5, pl * 0.35, 0.18), (x - sx * pw * 0.12, y - pl * 0.1, ph / 2 + 0.09), dark, 0.02, parent=body)
-            box("sensor", (0.18, 0.18, 0.12), (x + sx * pw * 0.25, y + pl * 0.3, ph / 2 + 0.06), gunm, 0.0, parent=body)
-            # barrel: mantlet, barrel, cooling rings and a muzzle brake
-            y0 = y + pl / 2
-            along_y(0.28, 0.36, (x, y0 + 0.18, 0.05), dark, parent=body, segs=12)
-            along_y(0.17, blen, (x, y0 + blen / 2, 0.05), gunm, parent=body, segs=10)
-            for c in range(3):
-                along_y(0.215, 0.06, (x, y0 + 0.45 + c * 0.16, 0.05), dark, parent=body, segs=10)
-            along_y(0.22, 0.22, (x, y0 + blen - 0.11, 0.05), dark, parent=body, segs=8)
-            box("brake_slot", (0.48, 0.06, 0.08), (x, y0 + blen - 0.1, 0.05), gunm, 0.0, parent=body)
-            muzzles.append((x, y0 + blen, 0.05))
+            box("ammo", (pw * 0.4, pl * 0.22, 0.16), (x - sx * pw * 0.1, y - pl * 0.34, ph / 2 + 0.08), dark, 0.02, parent=body)
+            cyl("mount", pw * 0.42, 0.1, (x, y + pl * 0.08, ph / 2 + 0.05), dark, parent=body, segs=16)
+            box("pod_nose", (pw * 0.8, 0.2, ph * 0.7), (x, y + pl / 2 + 0.08, 0), dark, 0.03, parent=body)
+            muzzles.append((x, y + pl * 0.08, ph / 2 + 0.1))
         if k == 0:
             ico("nav", 0.16, (-px - pw / 2 - 0.05, y, ph / 2), navr, 1, parent=body)
             ico("nav", 0.16, (px + pw / 2 + 0.05, y, ph / 2), navg, 1, parent=body)
@@ -381,7 +376,7 @@ def player_ship(sid):
     mesh_obj.parent = r
     bpy.data.objects.remove(body)
     for i, m in enumerate(muzzles):
-        empty("Muzzle_%d" % i, m, r)
+        empty("Gun_%d" % i, m, r)  # turret mounts, in gun-slot order
     for i, e in enumerate(engines):
         empty("Engine_%d" % i, e, r)
     export(r, os.path.join(OUT, "ships", sid + ".glb"))
@@ -559,6 +554,57 @@ def sentinel():
     export(r, os.path.join(OUT, "enemies", "sentinel.glb"))
     return {"hull": [3.2, 3.2, 6.0], "size": [7.4, 7.4, 6.0], "guns": 2}
 
+
+def turret():
+    """A twin-barrel turret about a metre across, in the parts the game moves: Base (fixed to the gun pod),
+    Yaw (the housing, turning left and right on the base) and Pitch (the barrels, raised and lowered), with a
+    Muzzle empty between the barrel tips. Nose +Y like the ships."""
+    rng = random.Random("turret")
+    metal = mat("turret_metal", "4a5262", 0.75, 0.35)
+    metal2 = mat("turret_metal2", "394050", 0.75, 0.4)
+    seam = mat("turret_seam", "14181f", 0.6, 0.7)
+    dark = mat("dark_metal", "1c2230", 0.6, 0.6)
+    lens = mat("turret_lens", "7fd8ff", 0.0, 0.3, emit=3.0)
+    r = root("turret")
+    base = root("Base")
+    base.parent = r
+    cyl("ring", 0.55, 0.16, (0, 0, 0.08), dark, parent=base, segs=28)
+    cyl("ring_top", 0.5, 0.06, (0, 0, 0.19), metal2, parent=base, segs=28)
+    for k in range(8):
+        a = k * math.pi / 4
+        box("bolt", (0.06, 0.06, 0.05), (math.cos(a) * 0.5, math.sin(a) * 0.5, 0.18), metal, 0.0, parent=base)
+    m = merge(base, "Base_mesh")
+    m.parent = base
+    yaw = root("Yaw")
+    yaw.parent = r
+    yaw.location = (0, 0, 0.22)
+    plated("housing", (0.78, 0.82, 0.36), (0, -0.06, 0.18), [metal, seam, metal2], yaw, cell=0.22, rng=rng, chamfer=0.07,
+           depth=0.012, seam=0.01, taper=(0.85, 0.9))
+    for sx in (-1, 1):
+        box("cheek", (0.1, 0.62, 0.5), (sx * 0.44, 0.02, 0.32), metal2, 0.02, parent=yaw, taper=(1.0, 0.7))
+        box("vent", (0.02, 0.3, 0.16), (sx * 0.5, -0.12, 0.3), dark, 0.0, parent=yaw)
+    box("back", (0.6, 0.18, 0.28), (0, -0.5, 0.16), dark, 0.02, parent=yaw)
+    box("sensor", (0.14, 0.14, 0.12), (0.26, -0.28, 0.42), dark, 0.01, parent=yaw)
+    ico("lens", 0.035, (0.26, -0.2, 0.43), lens, 1, parent=yaw)
+    m = merge(yaw, "Yaw_mesh")
+    m.parent = yaw
+    pitch = root("Pitch")
+    pitch.parent = yaw
+    pitch.location = (0, 0.06, 0.34)
+    box("mantlet", (0.6, 0.32, 0.3), (0, 0.06, 0), metal2, 0.04, parent=pitch)
+    for sx in (-1, 1):
+        x = sx * 0.16
+        along_y(0.1, 0.3, (x, 0.32, 0), dark, parent=pitch, segs=14)
+        along_y(0.052, 1.15, (x, 0.85, 0), metal, parent=pitch, segs=12)
+        for c in range(3):
+            along_y(0.075, 0.045, (x, 0.55 + c * 0.12, 0), dark, parent=pitch, segs=12)
+        along_y(0.078, 0.16, (x, 1.36, 0), dark, parent=pitch, segs=8)
+    m = merge(pitch, "Pitch_mesh")
+    m.parent = pitch
+    empty("Muzzle", (0, 1.45, 0), pitch)
+    export(r, os.path.join(OUT, "props", "turret.glb"))
+
+
 if __name__ == "__main__":
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     meta_path = os.path.join(OUT, "ship_meta.json")
@@ -566,8 +612,11 @@ if __name__ == "__main__":
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             meta = json.load(f)
-    for sid in (argv or list(SHIPS) + list(ENEMIES) + ["sentinel"]):
+    for sid in (argv or list(SHIPS) + list(ENEMIES) + ["sentinel", "turret"]):
         reset()
+        if sid == "turret":
+            turret()
+            continue
         meta[sid] = player_ship(sid) if sid in SHIPS else pirate(sid)
     os.makedirs(OUT, exist_ok=True)
     with open(meta_path, "w") as f:
