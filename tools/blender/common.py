@@ -117,6 +117,26 @@ def along_y(r, depth, loc, material, parent=None, segs=12, r2=None, caps=True):
     return cyl("cyl", r, depth, loc, material, (math.radians(-90), 0, 0), parent, segs, r2, caps=caps)
 
 
+def slab(name, pts, t, offset=0.0, plane="xy", material=None, parent=None, rot=(0, 0, 0), loc=(0, 0, 0), bevel=0.0):
+    """A flat plate of thickness t cut to any outline (wings, fins, blades). pts are (u, v) corners in order.
+    plane "xy": u = x, v = y, lying flat at height `offset`. plane "yz": u = y, v = z, standing upright at
+    x = `offset` (tail fins). The outline may be concave."""
+    bm = bmesh.new()
+
+    def co(u, v, w):
+        return (u, v, w) if plane == "xy" else (w, u, v)
+
+    bot = [bm.verts.new(co(u, v, offset - t / 2)) for u, v in pts]
+    top = [bm.verts.new(co(u, v, offset + t / 2)) for u, v in pts]
+    bm.faces.new(top)
+    bm.faces.new(list(reversed(bot)))
+    n = len(pts)
+    for i in range(n):
+        bm.faces.new((bot[i], bot[(i + 1) % n], top[(i + 1) % n], top[i]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return _finish(name, bm, material, loc, rot, parent, bevel)
+
+
 def ico(name, r, loc=(0, 0, 0), material=None, subdiv=2, parent=None, smooth=False):
     bm = bmesh.new()
     bmesh.ops.create_icosphere(bm, subdivisions=subdiv, radius=r)

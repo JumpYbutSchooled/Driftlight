@@ -6,6 +6,7 @@ extends Node3D
 ## but you can select them and fly alongside.
 
 const Ship = preload("res://scripts/ship.gd")
+const Turrets = preload("res://scripts/turrets.gd")
 const NAMES := ["Patient Mule", "Long Haul", "Coreward", "Saltwind", "Ironbelly", "Lantern", "Quiet Margin",
 	"Brass Gull", "Halcyon", "Old Reliable", "Ninth Ledger", "Morrow", "Slow Comet", "Tallyman", "Weathervane",
 	"Second Wind", "Kettle", "Far Harbour", "Dust Choir", "Good Return"]
@@ -25,6 +26,8 @@ var vel := Vector3.ZERO
 var _goal := Vector3.ZERO
 var _docked := 0.0  # seconds left inside the station
 var _plumes := []
+var _nozzles := []
+var _guns
 var _rock: Node3D
 var _work := 0.0
 var _work_len := 30.0
@@ -41,9 +44,10 @@ func setup(kind: String, model_id: String, rng: RandomNumberGenerator) -> void:
 	var size := Models.size(model_id)
 	radius = maxf(size.x, size.z) * 0.5
 	speed = rng.randf_range(20.0, 34.0) if role == "hauler" else rng.randf_range(12.0, 20.0)
-	var nozzle := clampf(size.x * 0.18 * 0.55, 0.6, 3.0)
+	_guns = Turrets.new(model)  # armed like any ship, but they never need them here
 	for e in Models.markers(model, "Engine"):
-		var pl := Ship.plume(nozzle)
+		_nozzles.append(Ship.nozzle_size(e))
+		var pl := Ship.plume(_nozzles[-1])
 		e.add_child(pl)
 		_plumes.append(pl)
 
@@ -134,8 +138,8 @@ func _process(delta: float) -> void:
 		var target := Basis.looking_at(f, Vector3.UP if absf(f.y) < 0.98 else Vector3.RIGHT)
 		basis = basis.slerp(target, 1.0 - exp(-1.5 * delta)).orthonormalized()
 	var power := clampf(vel.length() / speed, 0.0, 1.0)
-	for pl in _plumes:
-		Ship.set_plume(pl, 2.0 + 4.0 * power, 0.2 + 0.7 * power, Color(1.0, 0.62, 0.28))
+	for i in _plumes.size():
+		Ship.set_plume(_plumes[i], _nozzles[i] * (2.5 + 5.0 * power), 0.2 + 0.7 * power, Color(0.55, 0.7, 1.0))
 
 
 ## Hover by the rock with the mining beam on it; move on after a while (they don't really use the rock up).

@@ -1,10 +1,12 @@
 extends Node3D
 ## A pirate (or anomaly Sentinel) in 3D. Stats come from Game.ENEMIES; it circles the player at its
-## preferred distance on its own tilted orbit and shoots with a lead. Drops ore and pays a bounty.
+## preferred distance on its own tilted orbit, its turrets tracking you, and each turret that's on target
+## shoots with a lead. Drops ore and pays a bounty.
 ## Badly damaged pirates trail smoke and fire.
 
 const Ship = preload("res://scripts/ship.gd")
 const Fx = preload("res://scripts/fx.gd")
+const Turrets = preload("res://scripts/turrets.gd")
 
 var main
 var type := "raider"
@@ -18,6 +20,7 @@ var shot := {}
 var aggro := false
 var home := Vector3.ZERO
 var muzzles := []
+var guns  # Turrets
 var slow_t := 0.0
 var model: Node3D
 var _dead := false
@@ -26,6 +29,7 @@ var _orbit_axis := Vector3.UP
 var _orbit := 1.0
 var _wander := Vector3.ZERO
 var _plumes := []
+var _nozzles := []
 var _mflash := []
 var _mflash_t := 0.0
 var _smoke: Node3D
@@ -50,7 +54,8 @@ func setup(enemy_type: String, cat: int) -> void:
 	add_to_group("pirates")
 	model = Models.ship(type)
 	add_child(model)
-	muzzles = Models.markers(model, "Muzzle")
+	guns = Turrets.new(model)
+	muzzles = guns.muzzles()
 	var size := Models.size(type)
 	radius = maxf(size.x, size.z) * 0.5
 	_engine_col = Color("d080ff") if type == "sentinel" else Color("ff5a2a")
@@ -60,7 +65,8 @@ func setup(enemy_type: String, cat: int) -> void:
 		m.add_child(fq)
 		_mflash.append(fq)
 	for e in Models.markers(model, "Engine"):
-		var pl := Ship.plume(clampf(size.x * 0.1, 0.35, 1.4))
+		_nozzles.append(Ship.nozzle_size(e))
+		var pl := Ship.plume(_nozzles[-1])
 		e.add_child(pl)
 		_plumes.append(pl)
 
@@ -91,12 +97,13 @@ func _process(delta: float) -> void:
 		var tangent := n.cross(_orbit_axis).normalized() * _orbit
 		desired = n * (d - data.keep * k) * 1.5 + tangent * spd * 0.8
 		face = to
+		guns.aim(delta, _lead(p), 0.8)
 		_fire_cd -= delta
-		var facing := (-global_transform.basis.z).dot(n)
-		if _fire_cd <= 0.0 and d < data.range * k and facing > 0.6:
+		if _fire_cd <= 0.0 and d < data.range * k and guns.on_target.has(true):
 			_fire(p)
 			_fire_cd = 1.0 / data.rate * randf_range(0.8, 1.3)
 	else:
+		guns.rest(delta)
 		if _wander == Vector3.ZERO or position.distance_to(_wander) < 6.0:
 			_wander = home + Vector3(randf_range(-1, 1), randf_range(-0.3, 0.3), randf_range(-1, 1)).normalized() * randf_range(15.0, 45.0)
 		desired = _wander - position
@@ -115,9 +122,9 @@ func _process(delta: float) -> void:
 	if randf() < delta * 0.25:
 		_orbit = -_orbit
 	var moving := vel.length() > 3.0
-	var plume_len := clampf(radius * 0.5, 1.2, 5.0) * (0.6 + vel.length() / maxf(speed, 1.0))
-	for pl in _plumes:
-		Ship.set_plume(pl, plume_len, 0.9 if moving else 0.3, _engine_col)
+	var push := 3.0 + 5.0 * clampf(vel.length() / maxf(speed, 1.0), 0.0, 1.0)  # plume length in nozzle widths
+	for i in _plumes.size():
+		Ship.set_plume(_plumes[i], _nozzles[i] * push, 0.9 if moving else 0.3, _engine_col)
 	_mflash_t = maxf(0.0, _mflash_t - delta * 12.0)
 	for fq in _mflash:
 		fq.visible = _mflash_t > 0.0
@@ -128,10 +135,19 @@ func _process(delta: float) -> void:
 		add_child(_smoke)
 
 
+## Where to aim so a bolt meets the player (roughly: they may turn).
+func _lead(p) -> Vector3:
+	return p.position + p.vel * (position.distance_to(p.position) / shot.speed) * 0.6
+
+
+## Every turret that's on target fires at the lead point.
 func _fire(p) -> void:
-	var lead: Vector3 = p.position + p.vel * (position.distance_to(p.position) / shot.speed) * 0.6
+	var lead := _lead(p)
 	var pellets: int = data.get("pellets", 1)
-	for m in muzzles:
+	for gi in muzzles.size():
+		if not guns.on_target[gi]:
+			continue
+		var m: Node3D = muzzles[gi]
 		var mp: Vector3 = m.global_position
 		var dir := (lead - mp).normalized()
 		for i in pellets:

@@ -91,6 +91,7 @@ var backdrop: Node3D  # the planet: lives outside `world` so it stays visible (a
 var player
 var camera: Camera3D
 var sun: DirectionalLight3D
+var fill: DirectionalLight3D  # planetshine
 var sky_mat: ShaderMaterial
 var env: Environment
 var hud
@@ -246,22 +247,22 @@ func _build_environment() -> void:
 	sky_mat = ShaderMaterial.new()
 	sky_mat.shader = SKY_SHADER
 	sky.sky_material = sky_mat
-	sky.radiance_size = Sky.RADIANCE_SIZE_64
+	sky.radiance_size = Sky.RADIANCE_SIZE_256  # sharp enough for metal to show real reflections
 	env.sky = sky
 	# dark, empty space: almost no ambient light, so the side facing away from the sun falls into shadow
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.2, 0.22, 0.27)
-	env.ambient_light_energy = 0.26
+	env.ambient_light_energy = 0.16
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	# a filmic camera response: highlights roll off and desaturate like a real sensor instead of clipping
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	env.tonemap_exposure = 1.15
 	env.tonemap_white = 12.0
 	env.glow_enabled = true
-	env.glow_intensity = 0.5
+	env.glow_intensity = 0.32
 	env.glow_strength = 1.0
-	env.glow_bloom = 0.015
-	env.glow_hdr_threshold = 1.2
+	env.glow_bloom = 0.0  # only genuinely bright things (lamps, exhaust, the sun) bloom
+	env.glow_hdr_threshold = 1.6
 	env.set_glow_level(0, 0.0)  # bloom from the wider levels only: a soft lens glow, not a hard halo
 	env.set_glow_level(1, 0.6)
 	env.set_glow_level(2, 0.8)
@@ -300,9 +301,17 @@ func _build_environment() -> void:
 	sun.directional_shadow_split_3 = 0.4
 	sun.light_energy = 2.1
 	sun.shadow_opacity = 1.0
-	sun.light_angular_distance = 0.6  # a real sun's disc: shadows sharp up close, softening with distance
-	sun.shadow_blur = 1.2
+	sun.light_angular_distance = 0.3  # a real sun's disc: shadows sharp up close, softening with distance
+	sun.shadow_blur = 1.0
+	sun.shadow_bias = 0.04
+	sun.shadow_normal_bias = 3.0  # no shadow acne striping flat hull plates
 	add_child(sun)
+	# light thrown back off the planet: a faint fill in its colour from its side (set in _make_planet)
+	fill = DirectionalLight3D.new()
+	fill.light_energy = 0.0
+	fill.shadow_enabled = false
+	fill.light_specular = 0.3
+	add_child(fill)
 
 
 func _shader_rect(shader: Shader) -> ColorRect:
@@ -853,6 +862,7 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([sys_id, loc_i, 7])  # the same layout every visit
 
+	fill.light_energy = 0.0
 	if loc.kind != "gate":
 		_make_planet(loc.planet_type if loc.kind == "planet" else "void", loc.seed)
 
@@ -981,6 +991,11 @@ func _make_planet(ptype: String, planet_seed: int) -> void:
 	node.rotation = Vector3(rng.randf_range(-0.4, 0.4), rng.randf() * TAU, rng.randf_range(-0.4, 0.4))
 	backdrop.add_child(node)
 	_planet_base = node.position
+	if ptype != "void":
+		var to_planet := node.position.normalized()
+		fill.global_basis = Basis.looking_at(-to_planet, Vector3.UP if absf(to_planet.y) < 0.98 else Vector3.RIGHT)
+		fill.light_color = Color(pal[2]).lerp(Color(0.6, 0.65, 0.7), 0.4)
+		fill.light_energy = 0.14
 	if (ptype == "gas" and rng.randf() < 0.75) or rng.randf() < 0.15:
 		var ring := MeshInstance3D.new()
 		var pm := PlaneMesh.new()
@@ -1041,14 +1056,17 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			var st := Models.prop("station")
 			st.position = at
 			world.add_child(st)
-			_light(at + Vector3(0, 450, 0), Color("7ff0ff"), 2600.0, 2.5)
 			# the docking bay opens toward -Z: you fly in through the mouth and dock by reaching the pad
 			var bay := {"mouth": at + BAY_MOUTH, "out": Vector3.FORWARD, "pad": at + BAY_PAD, "zone_c": at + BAY_ZONE_C,
 				"zone_h": BAY_ZONE_H, "loc": loc}
 			var lm := _landmark(loc.name, "station", "station", at, open_station.bind(loc), "")
 			lm["bay"] = bay
-			for z in [-320.0, -420.0, -515.0]:  # lamps along the bay roof
-				_light(at + Vector3(0, 45, z), Color("ffe9cc"), 190.0, 2.4)
+			for z in [-320.0, -420.0, -515.0]:  # lamps along the bay roof (shadowed, so they don't shine through its walls)
+				var bl := _light(at + Vector3(0, 45, z), Color("ffe9cc"), 190.0, 2.4)
+				bl.shadow_enabled = true
+				bl.distance_fade_enabled = true
+				bl.distance_fade_begin = 2500.0
+				bl.distance_fade_length = 600.0
 			_light(at + Vector3(0, -40, -600), Color("ffe2b0"), 260.0, 1.2)  # floodlight spill out of the mouth
 			# the citadel's main masses (built in tools/blender/props.py, shown 3x), so you fly round it
 			_obstacle("capsule", {"a": at + Vector3(0, -375, 0), "b": at + Vector3(0, 360, 0), "r": 138.0})
@@ -1119,13 +1137,14 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			_landmark("Wormhole", "wormhole", "anomaly", at, enter_wormhole, "[G]  Enter the wormhole (or fly into it)")
 
 
-func _light(pos: Vector3, color: Color, range_m: float, energy: float) -> void:
+func _light(pos: Vector3, color: Color, range_m: float, energy: float) -> OmniLight3D:
 	var l := OmniLight3D.new()
 	l.light_color = color
 	l.omni_range = range_m
 	l.light_energy = energy
 	l.position = pos
 	world.add_child(l)
+	return l
 
 
 ## An ore field: dozens of huge mineable veins spread over a few kilometres, a couple of giant ones,

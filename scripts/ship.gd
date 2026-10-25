@@ -1,9 +1,9 @@
 extends Node3D
 ## The player's ship in 3D. The keys swing its heading (main.aim: A/D turn, R/F pitch, Q/E roll) and the
 ## ship turns to follow at its turn rate. W/S raise/lower the throttle, X brakes, SHIFT boosts. Each gun
-## slot is a turret on a gun pod that swings round on its own to track whatever the crosshair is on; a
-## turret only fires once it's on target, within its elevation limits, and with a clear line past your
-## own hull: it has to be able to see the target.
+## slot is a turret (on a pod, on the deck, under the keel or out on a flank, depending on the ship) that
+## swings round on its own to track whatever the crosshair is on; a turret only fires once it's on target,
+## within its arc, and with a clear line past your own hull: it has to be able to see the target.
 ##
 ## Flight model: a heavy ship. It takes seconds to build up speed and to bleed it off again, and the
 ## flight computer slowly damps out sideways drift so you end up going where the nose points. Turning
@@ -24,15 +24,11 @@ const BOOST_MULT := 1.8
 const BOOST_DRAIN := 35.0  # energy per second
 const BOLT_SPEED_MULT := 2.5  # bolts fly this much faster than the weapon numbers say (over half the time: a bit more range)
 const FIRE_RATE_MULT := 1.5  # and the guns cycle this much quicker
-const TURRET_YAW_SPEED := 3.2  # radians per second a turret swings round
-const TURRET_PITCH_SPEED := 2.4  # and raises / lowers its barrels
-const TURRET_PITCH_MIN := -0.3  # barrels can dip a little below the pod top...
-const TURRET_PITCH_MAX := 1.45  # ...and nearly straight up
-const TURRET_ON_TARGET := 0.05  # radians: how close to the target a barrel must point to fire
 const SHIELD_SHADER = preload("res://shaders/shield.gdshader")
 const PLUME_SHADER = preload("res://shaders/plume.gdshader")
 const NOZZLE_SHADER = preload("res://shaders/nozzle.gdshader")
 const Fx = preload("res://scripts/fx.gd")
+const Turrets = preload("res://scripts/turrets.gd")
 
 var main
 var vel := Vector3.ZERO
@@ -56,7 +52,8 @@ var model: Node3D
 var _model_id := ""
 var _glows := []
 var _plumes := []
-var _nozzle := 1.0
+var _nozzles := []  # per engine: nozzle size, metres
+var _guns  # the Turrets on this model
 var _mflash := []  # a glow at each muzzle, lit for a moment when that gun fires
 var _mflash_t := []
 var _smoke: Node3D  # smoke and fire pouring off the hull when it's badly damaged
@@ -111,16 +108,10 @@ func _build_model() -> void:
 	add_child(model)
 	engines = Models.markers(model, "Engine")
 	hull_box = Models.hull(Game.ship_id)
-	# a turret on every gun mount, sized to the ship's pods
-	turrets = []
-	var tscale := clampf(hull_box.y * 0.42 / 0.85, 0.9, 2.4)
-	for mount in Models.markers(model, "Gun"):
-		var t := Models.prop("turret")
-		t.scale = Vector3.ONE * tscale
-		mount.add_child(t)
-		turrets.append({"base": t, "yaw": t.find_child("Yaw", true, false), "pitch": t.find_child("Pitch", true, false),
-			"muzzle": t.find_child("Muzzle", true, false)})
-	muzzles = turrets.map(func(tu): return tu.muzzle)
+	# a turret on every gun mount (on top, underneath or out to the side: the mount says which way)
+	_guns = Turrets.new(model)
+	turrets = _guns.list
+	muzzles = _guns.muzzles()
 	var size := Models.size(Game.ship_id)
 	radius = maxf(size.x, size.z) * 0.45
 	_shield_mesh.scale = Vector3(size.x * 0.62, maxf(size.y * 1.4, size.x * 0.3), size.z * 0.62)
@@ -132,11 +123,12 @@ func _build_model() -> void:
 	for l in _lights:
 		l.queue_free()
 	_lights = []
-	var nozzle := clampf(hull_box.x * 0.18, 0.6, 3.0)
-	_nozzle = nozzle
+	_nozzles = []
 	for e in engines:
 		# the hot throat of the nozzle (a disc facing out the back), the exhaust plume, and a light that
 		# throws the burn's glow onto the hull and anything close behind
+		var nozzle := nozzle_size(e)
+		_nozzles.append(nozzle)
 		var g := MeshInstance3D.new()
 		var q := QuadMesh.new()
 		q.size = Vector2.ONE * nozzle * 0.85
@@ -167,6 +159,14 @@ func _build_model() -> void:
 		m.add_child(q)
 		_mflash.append(q)
 		_mflash_t.append(0.0)
+
+
+## How wide an engine's nozzle is: Blender scales each Engine_N marker by its nozzle's radius. (The scale is
+## taken off the marker, so the plume and glow hung on it come out the right size.)
+static func nozzle_size(e: Node3D) -> float:
+	var r := e.scale.x
+	e.scale = Vector3.ONE
+	return clampf(r * 2.0, 0.3, 6.0)
 
 
 ## An exhaust plume behind a nozzle (shaders/plume.gdshader), flaring a little as it leaves the bell;
@@ -383,9 +383,9 @@ func _update_exhaust() -> void:
 		var m: ShaderMaterial = g.material_override
 		m.set_shader_parameter("color", col)
 		m.set_shader_parameter("power", maxf(burn, 0.08))
-	var length := _nozzle * ((16.0 if warping else 11.0) if hot else 3.0 + 7.0 * power)
-	for pl in _plumes:
-		set_plume(pl, length * randf_range(0.98, 1.02), burn, col)
+	var length := (16.0 if warping else 11.0) if hot else 3.0 + 7.0 * power  # in nozzle widths
+	for i in _plumes.size():
+		set_plume(_plumes[i], _nozzles[i] * length * randf_range(0.98, 1.02), burn, col)
 	for l in _lights:
 		l.light_color = col
 		l.light_energy = burn * (2.2 if hot else 1.4) * randf_range(0.93, 1.0)
@@ -412,30 +412,17 @@ func _collide_rocks() -> void:
 				vel -= n * vn * 1.25
 
 
-## Swing every turret toward `target` (yaw on its base, then barrel pitch) and work out which can fire:
-## on target, within its elevation limits, and with a clear line past the hull.
+## Swing every turret toward `target` and work out which can fire: on target, within its arc (a turret on
+## top can't shoot down through the deck, one underneath can't shoot up), and with a clear line past the hull.
 func _aim_turrets(delta: float, target: Vector3) -> void:
+	_guns.aim(delta, target)
 	guns_ready = []
 	turret_why = []
-	for tu in turrets:
-		var base: Node3D = tu.base
-		var yaw_node: Node3D = tu.yaw
-		var pitch_node: Node3D = tu.pitch
-		var local: Vector3 = base.global_transform.affine_inverse() * target
-		var want_yaw := atan2(-local.x, -local.z)  # the barrels point down -Z
-		yaw_node.rotation.y = rotate_toward(yaw_node.rotation.y, want_yaw, TURRET_YAW_SPEED * delta)
-		var lp: Vector3 = yaw_node.global_transform.affine_inverse() * target - pitch_node.position
-		var want_pitch := atan2(lp.y, Vector2(lp.x, lp.z).length())
-		var reachable := want_pitch >= TURRET_PITCH_MIN and want_pitch <= TURRET_PITCH_MAX
-		pitch_node.rotation.x = rotate_toward(pitch_node.rotation.x, clampf(want_pitch, TURRET_PITCH_MIN, TURRET_PITCH_MAX),
-			TURRET_PITCH_SPEED * delta)
-		var mz: Vector3 = tu.muzzle.global_position
-		var barrel := (-pitch_node.global_basis.z).normalized()
-		var on_target := barrel.dot((target - mz).normalized()) > cos(TURRET_ON_TARGET)
-		var clear := can_fire(tu.muzzle, target)
-		guns_ready.append(reachable and on_target and clear)
-		turret_why.append("ready" if guns_ready[-1] else ("out of arc" if not reachable else ("swinging" if not on_target
-			else "hull in the way")))
+	for i in turrets.size():
+		var clear := can_fire(turrets[i].muzzle, target)
+		guns_ready.append(_guns.on_target[i] and clear)
+		turret_why.append("ready" if guns_ready[-1] else ("out of arc" if not _guns.in_arc[i] else ("swinging"
+			if not _guns.on_target[i] else "hull in the way")))
 
 
 ## Can the gun at `muzzle` hit `aim` without its shot passing through the hull box?

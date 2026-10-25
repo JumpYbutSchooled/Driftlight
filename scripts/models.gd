@@ -4,6 +4,7 @@ extends Node
 ## effects use.
 
 const HULL_SHADER = preload("res://shaders/hull.gdshader")
+const HULL_2S = preload("res://shaders/hull_2s.gdshader")
 
 var meta := {}  # per ship: hull [W, L, H], size [x, length, height], guns  (Blender axes, metres)
 var _scenes := {}
@@ -13,7 +14,7 @@ var _detailed := {}  # [imported material, scale] -> its hull-shader replacement
 # props shown bigger than they were built (the citadel is built full size; these are scaled up in game)
 const PROP_SCALE := {"station": 3.0, "gate": 5.0, "obelisk": 4.0, "spice_stand": 3.0, "wreck": 4.0, "crate": 1.5}
 # sub-panels per model unit: the full-size citadel gets coarser plating lines than ship-scale models
-const PROP_PANEL := {"station": 1.8}
+const PROP_PANEL := {"station": 1.3}
 var _radial: GradientTexture2D
 var _ring: GradientTexture2D
 
@@ -66,13 +67,14 @@ func prop(prop_name: String) -> Node3D:
 	play_anims(n)
 	var k: float = PROP_SCALE.get(prop_name, 1.0)
 	n.scale = Vector3.ONE * k
-	_detail(n, k, PROP_PANEL.get(prop_name, 2.2 * k))
+	_detail(n, k, PROP_PANEL.get(prop_name, 1.6 * k), 1.0 if prop_name == "turret" else 0.45)
 	return n
 
 
-## Gives every plain painted surface in a model the hull detail shader (glowing and see-through
-## surfaces keep their imported material).
-func _detail(node: Node, scale_k := 1.0, panel := 2.2) -> void:
+## Gives every plain painted surface in a model the hull detail shader (see-through surfaces keep their
+## imported material; glowing ones too, dimmed by `glow` - lamps and windows that look right on a ship
+## are too much spread over a whole station).
+func _detail(node: Node, scale_k := 1.0, panel := 1.6, glow := 1.0) -> void:
 	var stack := [node]
 	while not stack.is_empty():
 		var n: Node = stack.pop_back()
@@ -82,18 +84,28 @@ func _detail(node: Node, scale_k := 1.0, panel := 2.2) -> void:
 			continue
 		for i in mi.mesh.get_surface_count():
 			var m = mi.mesh.surface_get_material(i)
-			if not m is StandardMaterial3D or m.emission_enabled or m.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+			if not m is StandardMaterial3D or m.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+				continue
+			if m.emission_enabled:
+				if glow != 1.0:
+					var gkey := [m, glow]
+					if not _detailed.has(gkey):
+						var dim: StandardMaterial3D = m.duplicate()
+						dim.emission_energy_multiplier *= glow
+						_detailed[gkey] = dim
+					mi.set_surface_override_material(i, _detailed[gkey])
 				continue
 			var key := [m, panel]
 			if not _detailed.has(key):
 				var sm := ShaderMaterial.new()
-				sm.shader = HULL_SHADER
+				# open tubes (engine bells) are seen from inside too; everything else is closed and one-sided
+				sm.shader = HULL_2S if String(m.resource_name).contains("engine_bell") else HULL_SHADER
 				sm.set_shader_parameter("albedo", m.albedo_color)
 				sm.set_shader_parameter("metallic", m.metallic)
 				sm.set_shader_parameter("roughness", m.roughness)
 				sm.set_shader_parameter("panel", panel)
 				if String(m.resource_name).contains("_win"):
-					sm.set_shader_parameter("windows", 1.0)
+					sm.set_shader_parameter("windows", 0.35)
 					# windows stay a real size (a few metres) however much the model is scaled up
 					sm.set_shader_parameter("window_cell", Vector2(2.6, 3.8) / scale_k)
 				_detailed[key] = sm

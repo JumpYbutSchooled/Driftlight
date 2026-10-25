@@ -16,7 +16,43 @@ func _ready() -> void:
 			dir = a.substr(10)
 	if dir == "":
 		dir = OS.get_user_data_dir()
-	_run()
+	if "--gallery" in OS.get_cmdline_user_args():
+		_gallery()
+	else:
+		_run()
+
+
+## `-- --autoshot --gallery`: every ship model close up under the game's own lighting: three-quarter front
+## and rear, and from the sun's side. (Photo mode: the UI is hidden and time is stopped.)
+func _gallery() -> void:
+	await _secs(1.0)
+	main.start_new_game()
+	await _secs(1.5)
+	var p = main.player
+	main.toggle_photo()
+	main._photo_hint.visible = false
+	p.visible = false
+	var at: Vector3 = p.position
+	var ids: Array = Game.SHIPS.keys() + Game.ENEMIES.keys()
+	for id in ids:
+		var m: Node3D = Models.ship(id)
+		main.world.add_child(m)
+		m.global_position = at
+		var guns = load("res://scripts/turrets.gd").new(m)
+		for tu in guns.list:  # swing them a little, as if tracking something off the nose
+			tu.yaw.rotation.y = 0.5
+			tu.pitch.rotation.x = 0.3
+		var s: Vector3 = Models.size(id)
+		var r := maxf(s.x, s.z)
+		var sun: Vector3 = main.sun_dir_world
+		for view in [["front", Vector3(0.8, 0.45, -1.0)], ["rear", Vector3(-0.9, 0.35, 1.0)], ["sunside", sun + Vector3(0.3, 0.3, 0.0)]]:
+			main.camera.global_position = at + (view[1] as Vector3).normalized() * r * 1.4
+			main.camera.look_at(at, Vector3.UP)
+			await _wait(6)
+			await _shot("g_%s_%s" % [id, view[0]])
+		m.queue_free()
+		await _wait(2)
+	get_tree().quit()
 
 
 func _process(_delta: float) -> void:
