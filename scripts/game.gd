@@ -6,7 +6,7 @@ signal notify(text: String, color: Color)
 signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 
-const VERSION := 1  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 2  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots. The admin one (everything free, jump anywhere, god mode) only opens on a device that has
 # the admin key file, tied to that machine (see admin_allowed).
