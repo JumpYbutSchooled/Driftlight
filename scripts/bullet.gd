@@ -22,7 +22,7 @@ var slow := 0.0
 var _hit := []
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
 	if homing > 0.0:
 		var target = _nearest_pirate()
 		if target:

@@ -43,8 +43,8 @@ def shuttle(parent, loc, hull, glow, lamp):
 
 
 def station():
-    """A citadel about 650 m across: an octagonal plated tower ringed with modules, a hangar with chasing
-    guide lights, a big turning habitat ring and a smaller counter-turning ring below, solar arrays on long
+    """A citadel about 650 m across: an octagonal plated tower ringed with modules, a huge open docking bay
+    to fly into, a big turning habitat ring and a smaller counter-turning ring below, solar arrays on long
     trusses, nodding dishes, blinking beacons and shuttles flying loops round it. Lit windows come from the
     game's hull shader on the "_win" materials (far too many to model)."""
     S = 5.0  # built five times the size of ship-scale props
@@ -108,10 +108,10 @@ def station():
             box("rad_fin", (0.12 * S, 1.4 * S, 6.0 * S), tuple(out * (corner + 0.4 * S) + Vector((0, 0, -15.0 * S)) +
                 Vector((-math.sin(a), math.cos(a), 0)) * k * 0.5 * S), hull2, 0.0, rot=(0, 0, a - math.pi / 2), parent=core)
 
-    # modules bolted round the hub in two tiers (clear of the hangar, which faces +Y)
+    # modules bolted round the hub in two tiers (clear of the docking bay, which faces +Y)
     mods = []
     for i in range(12):
-        a = math.pi / 2 + 0.95 + i * (2 * math.pi - 1.9) / 11 + rng.uniform(-0.05, 0.05)
+        a = math.pi / 2 + 1.2 + i * (2 * math.pi - 2.4) / 11 + rng.uniform(-0.05, 0.05)
         tier = i % 2
         w, l, h = rng.uniform(4.0, 7.5) * S, rng.uniform(4.5, 8.5) * S, rng.uniform(3.5, 5.5) * S
         z = (rng.uniform(-6.0, -2.0) if tier else rng.uniform(1.0, 6.0)) * S
@@ -131,32 +131,109 @@ def station():
         light("mod_light", tuple(c + out * (l / 2 + 0.2 * S) + UPV * (h / 2)), 0.35 * S * 0.5, red if a % 2 < 1 else green, r,
               period=120, on=10, phase=int(a * 20) % 120)
 
-    # the hangar: a long module facing +Y with a glowing mouth and chasing guide lights
-    bay = Vector((0, 15.5 * S, 0))
-    bw, bl, bh = 13.0 * S, 15.0 * S, 8.0 * S
-    plated("bay", (bw, bl, bh), tuple(bay), P, core, cell=6.0, rng=rng, chamfer=0.5 * S)
-    mouth_y = bay.y + bl / 2
-    box("bay_mouth", (9.0 * S, 0.3 * S, 4.6 * S), (0, mouth_y + 0.05 * S, 0), mat("st_bay", "05070c", 0.2, 0.9), 0.0, parent=core)
-    box("bay_back", (8.6 * S, 0.2 * S, 4.2 * S), (0, mouth_y + 0.1 * S, 0), mat("st_bay_glow", "1a3a55", 0.0, 0.5, emit=1.5), 0.0,
-        parent=core)
-    for z in (-2.5, 2.5):
-        box("bay_frame", (10.4 * S, 0.5 * S, 0.5 * S), (0, mouth_y + 0.15 * S, z * S), hazard, 0.0, parent=core)
-    for x in (-4.95, 4.95):
-        box("bay_frame", (0.5 * S, 0.5 * S, 5.5 * S), (x * S, mouth_y + 0.15 * S, 0), hazard, 0.0, parent=core)
-    for k in range(10):
-        box("bay_glow", (8.0 * S, 0.1 * S, 0.06 * S), (0, mouth_y + 0.25 * S, (-2.0 + k * 0.44) * S), cyan, 0.0, parent=core)
-    for k in range(17):
-        box("hazard", (0.5 * S, 0.55 * S, 0.7 * S), ((-4.0 + k * 0.5) * S, mouth_y + 0.2 * S, -2.9 * S), hazard if k % 2 else dark,
-            0.0, parent=core)
-    g.patch(frame(bay + UPV * (bh / 2), Vector((1, 0, 0)), Vector((0, 1, 0)), UPV), bw * 0.9, bl * 0.9, 70, 3.5)
+    # the docking bay: a huge open hangar facing +Y that ships fly right into (about 240 m wide, 135 m
+    # tall and 270 m deep once the game shows the station 3x). A solid block joins it to the hub; the bay
+    # itself is a hollow shell - floor, roof and side walls - with structural ribs, light strips, lit
+    # control-room windows, gantries, ships parked down both sides, a landing pad at the back and lines of
+    # approach beacons chasing inward out in front of the mouth. The game's collision boxes and docking
+    # zone (main.gd, "station") follow these numbers.
+    IW, IH, T = 8.0 * S, 4.5 * S, 1.2 * S  # interior half-width, half-height, shell thickness
+    y0, y1 = 18.0 * S, 36.0 * S  # back wall, mouth
+    yc, L = (y0 + y1) / 2, y1 - y0
+    inner = mat("st_bay_inner", "3a404c", 0.55, 0.6)
+    deck = mat("st_deck", "262a31", 0.5, 0.75)
+    strip = mat("st_strip", "fff1d6", 0.0, 0.3, emit=9.0)
+    pad_glow = mat("st_pad", "6dff9a", 0.0, 0.3, emit=6.0)
+    berth = mat("st_berthed", "5a6070", 0.5, 0.5)
+    plated("bay_root", (2 * (IW + T), y0 - 7.0 * S, 2 * (IH + T)), (0, (y0 + 7.0 * S) / 2, 0), P, core, cell=6.0, rng=rng,
+           chamfer=0.4 * S)
     for sx in (-1, 1):
-        g.patch(frame(bay + Vector((sx * bw / 2, 0, 0)), Vector((0, 0, -sx)), Vector((0, 1, 0)), Vector((sx, 0, 0))),
-                bh * 0.8, bl * 0.85, 30, 3.0, kinds=["pipes", "vent", "hatch", "block"])
-    for k in range(10):
-        y = mouth_y + 2.5 * S + k * 3.2 * S
+        plated("bay_wall", (T, L, 2 * (IH + T)), (sx * (IW + T / 2), yc, 0), P, core, cell=6.0, rng=rng,
+               faces=["+X" if sx > 0 else "-X"])
+        box("bay_lining", (0.1 * S, L, 2 * IH), (sx * (IW - 0.04 * S), yc, 0), inner, 0.0, parent=core)
+        g.patch(frame((sx * (IW + T + 0.05), yc, 0), Vector((0, sx, 0)), Vector((0, 0, 1)), Vector((sx, 0, 0))), L * 0.9,
+                2 * IH, 40, 3.5, kinds=["pipes", "vent", "hatch", "block", "radiator"])
+    for sz in (-1, 1):
+        plated("bay_roof" if sz > 0 else "bay_floor", (2 * (IW + T), L, T), (0, yc, sz * (IH + T / 2)), P, core, cell=6.0, rng=rng,
+               faces=["+Z" if sz > 0 else "-Z"])
+        box("bay_lining", (2 * IW, L, 0.1 * S), (0, yc, sz * (IH - 0.04 * S)), deck if sz < 0 else inner, 0.0, parent=core)
+    g.patch(frame((0, yc, IH + T + 0.05), Vector((1, 0, 0)), Vector((0, 1, 0)), UPV), 2 * IW, L * 0.9, 80, 2.4)  # low: the ring passes over
+    box("bay_backwall", (2 * IW, 0.1 * S, 2 * IH), (0, y0 + 0.04 * S, 0), inner, 0.0, parent=core)
+    # ribs every few tens of metres, with knee braces in the roof corners
+    for k in range(6):
+        y = y0 + (k + 0.5) * L / 6
         for sx in (-1, 1):
-            cyl("guide_post", 0.12 * S, 1.2 * S, (sx * 5.5 * S, y, -3.2 * S), dark, parent=core, segs=6)
-            light("guide", (sx * 5.5 * S, y, -2.5 * S), 0.22 * S, cyan, r, period=60, on=6, phase=(9 - k) * 6)
+            box("bay_rib", (0.7 * S, 0.8 * S, 2 * IH), (sx * (IW - 0.35 * S), y, 0), trim, 0.0, parent=core)
+            box("bay_brace", (2.4 * S, 0.5 * S, 0.5 * S), (sx * (IW - 1.0 * S), y, IH - 1.0 * S), dark, 0.0,
+                rot=(0, math.radians(45 * sx), 0), parent=core)
+        box("bay_rib", (2 * IW, 0.8 * S, 0.7 * S), (0, y, IH - 0.35 * S), trim, 0.0, parent=core)
+    # light strips down the roof
+    for x in (-5.0, -1.8, 1.8, 5.0):
+        box("bay_strip", (0.22 * S, L * 0.96, 0.08 * S), (x * S, yc, IH - 0.12 * S), strip, 0.0, parent=core)
+    # gantries and a rail along each wall, with lit control-room windows above them
+    for sx in (-1, 1):
+        box("bay_catwalk", (1.1 * S, L * 0.96, 0.12 * S), (sx * (IW - 0.55 * S), yc, 0.2 * S), dark, 0.0, parent=core)
+        box("bay_rail", (0.06 * S, L * 0.96, 0.45 * S), (sx * (IW - 1.1 * S), yc, 0.45 * S), trim, 0.0, parent=core)
+        windows(frame((sx * (IW - 0.1 * S), yc, 2.6 * S), Vector((0, -sx, 0)), Vector((0, 0, 1)), Vector((-sx, 0, 0))), L * 0.92,
+                1.4 * S, 2, win, rng, core, cell=(1.6, 1.0), gap=2.4, lit=0.8, name="bay_windows")
+        box("bay_strip", (0.1 * S, L * 0.96, 0.06 * S), (sx * (IW - 0.08 * S), yc, -0.6 * S), strip, 0.0, parent=core)
+    # the back wall: hangar doors into the station and a control room looking out over the bay
+    for x in (-5.0, 0.0, 5.0):
+        box("bay_door", (4.4 * S, 0.3 * S, 5.6 * S), (x * S, y0 + 0.15 * S, -IH + 2.9 * S), dark, 0.0, parent=core)
+        for sx in (-1, 1):
+            box("bay_door_edge", (0.25 * S, 0.35 * S, 5.6 * S), ((x + sx * 2.2) * S, y0 + 0.17 * S, -IH + 2.9 * S), hazard, 0.0,
+                parent=core)
+        box("bay_door_edge", (4.4 * S, 0.35 * S, 0.25 * S), (x * S, y0 + 0.17 * S, -IH + 5.7 * S), hazard, 0.0, parent=core)
+    box("control_room", (9.0 * S, 1.6 * S, 1.8 * S), (0, y0 + 0.8 * S, IH - 1.6 * S), hull2, 0.1 * S, parent=core)
+    box("control_glass", (8.4 * S, 0.1 * S, 0.7 * S), (0, y0 + 1.62 * S, IH - 1.55 * S), win, 0.0, parent=core)
+    # a crane bridge across the bay over the landing pad
+    pad_y = y0 + 5.0 * S
+    box("crane", (2 * IW, 0.9 * S, 0.7 * S), (0, pad_y, IH - 1.6 * S), hazard, 0.0, parent=core)
+    box("crane_trolley", (1.6 * S, 1.4 * S, 0.9 * S), (2.0 * S, pad_y, IH - 2.3 * S), dark, 0.05 * S, parent=core)
+    cyl("crane_cable", 0.06 * S, 2.0 * S, (2.0 * S, pad_y, IH - 3.6 * S), trim, parent=core, segs=6)
+    # the landing pad, ringed in green
+    box("pad", (8.0 * S, 8.0 * S, 0.1 * S), (0, pad_y, -IH + 0.06 * S), dark, 0.0, parent=core)
+    torus("pad_ring", 2.8 * S, 0.1 * S, (0, pad_y, -IH + 0.12 * S), pad_glow, parent=core, seg=64, ring=6)
+    for sx in (-1, 1):
+        box("pad_edge", (0.3 * S, 8.0 * S, 0.12 * S), (sx * 4.0 * S, pad_y, -IH + 0.08 * S), hazard, 0.0, parent=core)
+        box("pad_edge", (8.0 * S, 0.3 * S, 0.12 * S), (0, pad_y + sx * 4.0 * S, -IH + 0.08 * S), hazard, 0.0, parent=core)
+        for sy in (-1, 1):
+            light("pad_light", (sx * 4.0 * S, pad_y + sy * 4.0 * S, -IH + 0.35 * S), 0.25 * S, pad_glow, r, period=60, on=30)
+    # ships parked down both sides, noses to the mouth
+    for sx in (-1, 1):
+        for y in (y0 + 4.0 * S, y0 + 10.0 * S, y0 + 15.0 * S):
+            sp = Vector((sx * 5.6 * S, y, -IH + 0.9 * S))
+            box("parked", (2.2 * S, 5.0 * S, 1.3 * S), tuple(sp), berth, 0.1 * S, taper=(0.6, 0.8), parent=core)
+            box("parked_wing", (3.8 * S, 1.8 * S, 0.25 * S), tuple(sp - Vector((0, 0.9 * S, 0.3 * S))), berth, 0.05 * S, parent=core)
+            box("parked_pad", (4.4 * S, 6.2 * S, 0.06 * S), (sp.x, sp.y, -IH + 0.06 * S), hazard, 0.0, parent=core)
+            box("parked_lamp", (0.6 * S, 0.3 * S, 0.2 * S), tuple(sp + Vector((0, 2.4 * S, 0.5 * S))), lamp, 0.0, parent=core)
+    # guide lights down the deck chasing inward to the pad
+    for k in range(12):
+        y = y1 - (k + 0.5) * (y1 - pad_y - 4.0 * S) / 12
+        for sx in (-1, 1):
+            light("bay_guide", (sx * 3.0 * S, y, -IH + 0.15 * S), 0.18 * S, cyan, r, period=60, on=6, phase=(k * 5) % 60)
+    # the mouth: a heavy hazard-striped frame round the opening, floodlights shining in
+    for sz in (-1, 1):
+        box("mouth_frame", (2 * (IW + T) + 1.0 * S, 1.0 * S, 1.0 * S), (0, y1 + 0.3 * S, sz * (IH + T * 0.5)), dark, 0.05 * S,
+            parent=core)
+        for k in range(19):
+            box("mouth_hazard", (0.9 * S, 0.12 * S, 0.7 * S), ((-8.4 + k * 0.93) * S, y1 + 0.82 * S, sz * (IH + T * 0.5)),
+                hazard if k % 2 else dark, 0.0, parent=core)
+        box("flood", (2 * IW * 0.9, 0.4 * S, 0.25 * S), (0, y1 - 0.4 * S, sz * (IH - 0.2 * S)), strip, 0.0, parent=core)
+    for sx in (-1, 1):
+        box("mouth_frame", (1.0 * S, 1.0 * S, 2 * (IH + T)), (sx * (IW + T * 0.5), y1 + 0.3 * S, 0), dark, 0.05 * S, parent=core)
+        for k in range(10):
+            box("mouth_hazard", (0.7 * S, 0.12 * S, 0.9 * S), (sx * (IW + T * 0.5), y1 + 0.82 * S, (-4.6 + k * 1.02) * S),
+                hazard if k % 2 else dark, 0.0, parent=core)
+        for sz in (-1, 1):
+            light("mouth_beacon", (sx * (IW + T), y1 + 0.9 * S, sz * (IH + T)), 0.45 * S, red if sx < 0 else green, r, period=60,
+                  on=10, phase=0 if sz > 0 else 30)
+    # approach beacons: two lines of lit buoys stretching out from the mouth, chasing inward
+    for k in range(14):
+        y = y1 + 3.0 * S + k * 4.0 * S
+        for sx in (-1, 1):
+            cyl("beacon_post", 0.15 * S, 1.4 * S, (sx * (IW + 2.0 * S), y, -IH - 1.6 * S), dark, parent=core, segs=6)
+            light("approach", (sx * (IW + 2.0 * S), y, -IH - 0.7 * S), 0.32 * S, cyan, r, period=60, on=6, phase=((13 - k) * 4) % 60)
 
     # solar arrays on long trusses
     for sx in (-1, 1):

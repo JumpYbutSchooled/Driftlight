@@ -5,7 +5,6 @@ extends Node3D
 
 const Ship = preload("res://scripts/ship.gd")
 const Fx = preload("res://scripts/fx.gd")
-const Trail = preload("res://scripts/trail.gd")
 
 var main
 var type := "raider"
@@ -26,7 +25,6 @@ var _fire_cd := 1.0
 var _orbit_axis := Vector3.UP
 var _orbit := 1.0
 var _wander := Vector3.ZERO
-var _trails := []
 var _plumes := []
 var _mflash := []
 var _mflash_t := 0.0
@@ -41,7 +39,7 @@ func setup(enemy_type: String, cat: int) -> void:
 	var k := Game.WORLD_SCALE
 	max_hp = data.hp * danger
 	hp = max_hp
-	speed = data.speed * k
+	speed = data.speed * k * 0.6  # in step with the player's heavier, slower ships
 	shot = {"damage": data.damage * danger, "speed": data.bolt * k, "life": data.range / data.bolt + 0.2, "mining": 0.0,
 		"color": Color("d080ff") if type == "sentinel" else Color("ff4a4a"),
 		"size": Vector2(3, 7) if data.has("boss") else Vector2(2, 5), "pierce": 0, "homing": 0.0, "slow": 0.0}
@@ -65,18 +63,14 @@ func setup(enemy_type: String, cat: int) -> void:
 		var pl := Ship.plume(clampf(size.x * 0.1, 0.35, 1.4))
 		e.add_child(pl)
 		_plumes.append(pl)
-		var t := Trail.new()
-		t.width = clampf(size.x * 0.08, 0.3, 1.0)
-		t.color = Color(_engine_col, 0.3)
-		e.add_child(t)
-		_trails.append(t)
+
 
 
 func describe() -> String:
 	return "%s  -  %d / %d hull" % [data.name, ceili(hp), ceili(max_hp)]
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
 	var p = main.player
 	var to: Vector3 = p.position - position
 	var d := to.length()
@@ -112,7 +106,7 @@ func _physics_process(delta: float) -> void:
 	position += main.push_out(position, radius * 0.6)
 	if face.length() > 0.5:
 		var want := Basis.looking_at(face.normalized(), Vector3.UP if absf(face.normalized().y) < 0.98 else Vector3.RIGHT)
-		basis = basis.slerp(want, 1.0 - exp(-5.0 * delta)).orthonormalized()
+		basis = basis.slerp(want, 1.0 - exp(-2.2 * delta)).orthonormalized()
 	for a in get_tree().get_nodes_in_group("asteroids"):
 		var off: Vector3 = position - a.position
 		var minr: float = a.radius + radius * 0.6
@@ -121,8 +115,6 @@ func _physics_process(delta: float) -> void:
 	if randf() < delta * 0.25:
 		_orbit = -_orbit
 	var moving := vel.length() > 3.0
-	for t in _trails:
-		t.emitting = moving
 	var plume_len := clampf(radius * 0.5, 1.2, 5.0) * (0.6 + vel.length() / maxf(speed, 1.0))
 	for pl in _plumes:
 		Ship.set_plume(pl, plume_len, 0.9 if moving else 0.3, _engine_col)

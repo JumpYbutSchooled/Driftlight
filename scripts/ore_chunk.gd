@@ -51,7 +51,7 @@ func describe() -> String:
 	return "%s ore (%s)  x%d  -  fly into it to collect" % [Game.ORES[ore_id].name, Game.Q_NAMES[quality], amount]
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
 	position += vel * delta
 	vel = vel.move_toward(Vector3.ZERO, 3.0 * delta)
 	rotation += _spin * delta * clampf(vel.length() / 4.0, 0.15, 1.0)

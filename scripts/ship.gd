@@ -5,12 +5,21 @@ extends Node3D
 ## turret only fires once it's on target, within its elevation limits, and with a clear line past your
 ## own hull: it has to be able to see the target.
 ##
-## Flight model: the ship "grips" space, so sideways drift dies off quickly and you go where the nose
-## points; slowing down is quicker than speeding up.
+## Flight model: a heavy ship. It takes seconds to build up speed and to bleed it off again, and the
+## flight computer slowly damps out sideways drift so you end up going where the nose points. Turning
+## has momentum too: holding a turn key spins the ship up to its turn rate, and letting go spins it down
+## again, rather than the nose snapping round at a fixed rate. The autopilot and the warp drive steer by
+## setting main.aim; the same spin-up / spin-down brings the nose round to it and settles it there.
 
-const THROTTLE_RATE := 1.6  # throttle change per second while W/S is held
+const SPEED_MULT := 0.45  # top speeds are this fraction of the ship's speed stat (in 3D units)
+const ACCEL := 0.22  # throttle response: fraction of top speed gained per second
+const DECEL := 0.3  # easing off the throttle sheds speed a little quicker
+const BRAKE := 0.6  # X
+const THROTTLE_RATE := 0.8  # throttle change per second while W/S is held
 const REVERSE_MAX := 0.35  # reverse thrust is weaker than forward
-const GRIP := 2.6  # how fast sideways drift dies off (times top speed, per second)
+const GRIP := 0.5  # how fast the flight computer damps sideways drift (times top speed, per second)
+const TURN_MULT := 0.45  # top turn rate (rad/s) is this times the ship's turn stat; rolling is quicker
+const SPIN_UP := 1.3  # turn rate gained per second, as a fraction of the top turn rate
 const BOOST_MULT := 1.8
 const BOOST_DRAIN := 35.0  # energy per second
 const BOLT_SPEED_MULT := 2.5  # bolts fly this much faster than the weapon numbers say (over half the time: a bit more range)
@@ -22,8 +31,8 @@ const TURRET_PITCH_MAX := 1.45  # ...and nearly straight up
 const TURRET_ON_TARGET := 0.05  # radians: how close to the target a barrel must point to fire
 const SHIELD_SHADER = preload("res://shaders/shield.gdshader")
 const PLUME_SHADER = preload("res://shaders/plume.gdshader")
+const NOZZLE_SHADER = preload("res://shaders/nozzle.gdshader")
 const Fx = preload("res://scripts/fx.gd")
-const Trail = preload("res://scripts/trail.gd")
 
 var main
 var vel := Vector3.ZERO
@@ -41,11 +50,11 @@ var muzzles := []  # the turrets' barrel tips, one per gun slot (front-left, fro
 var turrets := []  # per gun slot: {base, yaw, pitch, muzzle} nodes of its turret
 var engines := []
 var guns_ready := []  # per gun: can it fire at the aim point right now (for the debug screen)
+var turret_why := []  # per gun: why it can't (for the debug screen and tests)
 var hull_box := Vector3(5, 1.6, 6)  # width, height, length of the hull itself
 var model: Node3D
 var _model_id := ""
 var _glows := []
-var _trails := []
 var _plumes := []
 var _nozzle := 1.0
 var _mflash := []  # a glow at each muzzle, lit for a moment when that gun fires
@@ -61,6 +70,9 @@ var _since_boost := 99.0
 var _flash := 0.0
 var _detent := false  # throttle parked at 0 until W/S is released
 var _bank := 0.0
+var turn_input := Vector3.ZERO  # from the keys (main._steer): x pitch, y yaw, z roll, each -1..1
+var ang_vel := Vector3.ZERO  # world-space angular velocity, rad/s
+var _lights := []  # an engine light per nozzle, lighting the hull while it burns
 
 
 func _ready() -> void:
@@ -95,8 +107,6 @@ func _build_model() -> void:
 	_model_id = Game.ship_id
 	if model:
 		model.queue_free()
-	for t in _trails:
-		t.queue_free()
 	model = Models.ship(Game.ship_id)
 	add_child(model)
 	engines = Models.markers(model, "Engine")
@@ -118,21 +128,37 @@ func _build_model() -> void:
 	_slot_cd.resize(muzzles.size())
 	_slot_cd.fill(0.0)
 	_glows = []
-	_trails = []
 	_plumes = []
+	for l in _lights:
+		l.queue_free()
+	_lights = []
 	var nozzle := clampf(hull_box.x * 0.18, 0.6, 3.0)
 	_nozzle = nozzle
 	for e in engines:
-		var g := Models.glow_quad(Color(1.0, 0.6, 0.25, 0.9), nozzle * 0.8)
-		g.material_override = g.material_override.duplicate()  # tinted per frame, so not the shared one
+		# the hot throat of the nozzle (a disc facing out the back), the exhaust plume, and a light that
+		# throws the burn's glow onto the hull and anything close behind
+		var g := MeshInstance3D.new()
+		var q := QuadMesh.new()
+		q.size = Vector2.ONE * nozzle * 0.85
+		g.mesh = q
+		var nm := ShaderMaterial.new()
+		nm.shader = NOZZLE_SHADER
+		g.material_override = nm
+		g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		g.position = Vector3(0, 0, -nozzle * 0.05)
 		e.add_child(g)
 		_glows.append(g)
 		var pl := plume(nozzle)
 		e.add_child(pl)
 		_plumes.append(pl)
-		var t := _trail(nozzle * 0.5)
-		e.add_child(t)
-		_trails.append(t)
+		var l := OmniLight3D.new()
+		l.position = Vector3(0, 0, nozzle * 1.6)
+		l.omni_range = nozzle * 9.0
+		l.omni_attenuation = 1.6
+		l.shadow_enabled = false
+		l.light_energy = 0.0
+		e.add_child(l)
+		_lights.append(l)
 	_mflash = []
 	_mflash_t = []
 	for m in muzzles:
@@ -143,11 +169,12 @@ func _build_model() -> void:
 		_mflash_t.append(0.0)
 
 
-## A soft cone of exhaust light behind a nozzle; stretched and tinted each frame by the caller.
+## An exhaust plume behind a nozzle (shaders/plume.gdshader), flaring a little as it leaves the bell;
+## stretched and tinted each frame by the caller.
 static func plume(nozzle: float) -> MeshInstance3D:
 	var cm := CylinderMesh.new()
-	cm.bottom_radius = nozzle * 0.6
-	cm.top_radius = nozzle * 0.12
+	cm.bottom_radius = nozzle * 0.32
+	cm.top_radius = nozzle * 0.55
 	cm.height = 1.0
 	cm.radial_segments = 16
 	cm.rings = 2
@@ -174,13 +201,6 @@ static func set_plume(pl: MeshInstance3D, length: float, power: float, col: Colo
 	m.set_shader_parameter("color", col)
 
 
-## A glowing exhaust ribbon left behind in world space.
-func _trail(width: float) -> Node3D:
-	var t := Trail.new()
-	t.width = width
-	t.color = Color(1.0, 0.62, 0.3, 0.55)
-	return t
-
 func heal_full() -> void:
 	hull = st.hull
 	shield = st.shield
@@ -190,6 +210,17 @@ func heal_full() -> void:
 func stop() -> void:
 	vel = Vector3.ZERO
 	throttle = 0.0
+	ang_vel = Vector3.ZERO
+
+
+## Cruising speed at full throttle, m/s.
+func top_speed() -> float:
+	return st.speed * Game.WORLD_SCALE * SPEED_MULT
+
+
+## Top turn rate, rad/s (yaw and pitch; roll is half as quick again).
+func turn_rate() -> float:
+	return st.turn * TURN_MULT
 
 
 func set_dead(dead: bool) -> void:
@@ -202,7 +233,7 @@ func forward() -> Vector3:
 	return -global_transform.basis.z
 
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
 	if not alive:
 		return
 	var want_boost := false
@@ -225,30 +256,19 @@ func _physics_process(delta: float) -> void:
 		if _since_boost > 1.0:
 			energy = minf(st.energy, energy + st.energy_regen * delta)
 
-	# swing the nose toward the aim at the ship's turn rate (the warp sequence steers while warping)
-	var q := global_transform.basis.get_rotation_quaternion()
-	var target: Quaternion = main.aim.get_rotation_quaternion()
-	var ang := q.angle_to(target)
-	if ang > 0.0001:
-		var step: float = st.turn * 1.15 * delta
-		q = q.slerp(target, minf(1.0, step / ang))
-	# bank into turns: roll a little toward the side the aim is on
-	var side: float = main.aim.z.dot(global_transform.basis.x)
-	_bank = lerpf(_bank, clampf(side * 2.5, -0.6, 0.6), 1.0 - exp(-4.0 * delta))
-	basis = Basis(q)
-	if model:
-		model.rotation.z = _bank
+	_turn(delta)
 
-	var top: float = st.speed * Game.WORLD_SCALE * (BOOST_MULT if boosting else 1.0)
+	var cruise := top_speed()
+	var top: float = cruise * (BOOST_MULT if boosting else 1.0)
 	var tgt := top if boosting else throttle * top
 	var fwd := forward()
 	var vf := vel.dot(fwd)
 	var lateral := vel - fwd * vf
-	var accel := top * (2.2 if boosting else 1.3)
+	var accel := cruise * (ACCEL * 2.0 if boosting else ACCEL)
 	if absf(tgt) < absf(vf) or signf(tgt) * signf(vf) < 0.0:
-		accel = top * (3.5 if braking else 1.8)  # slowing down is quicker than speeding up
+		accel = cruise * (BRAKE if braking else DECEL)
 	vf = move_toward(vf, tgt, accel * delta)
-	lateral = lateral.move_toward(Vector3.ZERO, top * GRIP * delta)
+	lateral = lateral.move_toward(Vector3.ZERO, cruise * GRIP * delta)
 	if main.mode != "warp":  # during a warp the warp sequence drives the ship
 		vel = fwd * vf + lateral
 	thrusting = absf(tgt) > 0.5 or main.travel.get("phase", "") in ["charge", "travel"]
@@ -291,6 +311,44 @@ func _physics_process(delta: float) -> void:
 	_update_exhaust()
 
 
+## Turning with momentum. With a turn key held the ship spins up toward its turn rate about that axis;
+## with none held it spins down to a stop and holds that heading (main.aim follows the nose). While the
+## autopilot or the warp drive is steering, it turns toward main.aim instead: spinning up, then easing off
+## in time to come to rest with the nose on it.
+func _turn(delta: float) -> void:
+	var rate := turn_rate()
+	var accel := rate * SPIN_UP
+	var b := global_transform.basis.orthonormalized()
+	var want := Vector3.ZERO
+	var steering: bool = not main.autopilot.is_empty() or not main.travel.is_empty()
+	var ang := 0.0
+	if control and turn_input != Vector3.ZERO:
+		steering = false
+		want = b * Vector3(turn_input.x * rate, turn_input.y * rate, -turn_input.z * rate * 1.5)
+	elif steering:
+		var err: Quaternion = main.aim.get_rotation_quaternion() * b.get_rotation_quaternion().inverse()
+		if err.w < 0.0:
+			err = -err
+		ang = err.get_angle()
+		if ang > 0.0005:
+			want = err.get_axis().normalized() * minf(rate, sqrt(2.0 * accel * ang) * 0.85)
+	ang_vel = ang_vel.move_toward(want, accel * delta)
+	var spin := ang_vel.length()
+	if steering and ang < 0.002 and spin < 0.02:
+		b = main.aim.orthonormalized()  # settled on the heading
+		ang_vel = Vector3.ZERO
+	elif spin > 0.00001:
+		b = Basis(ang_vel / spin, spin * delta) * b
+	basis = b.orthonormalized()
+	if not steering:
+		main.aim = basis  # hold whatever heading the ship has turned to
+	# lean into a yaw a little, like an aircraft banking
+	var yaw_rate: float = (basis.inverse() * ang_vel).y
+	_bank = lerpf(_bank, clampf(yaw_rate / maxf(rate, 0.01) * 0.3, -0.3, 0.3), 1.0 - exp(-3.0 * delta))
+	if model:
+		model.rotation.z = _bank
+
+
 ## W/S move the throttle lever; it stops at 0% on the way down so it's easy to sit still. With
 ## "hold to thrust" on, W is full throttle only while held and S is reverse.
 func _update_throttle(delta: float) -> void:
@@ -314,21 +372,24 @@ func _update_throttle(delta: float) -> void:
 		_detent = true
 
 
+## Plume length and brightness, nozzle glow, engine lights and the engine rumble, from the throttle.
 func _update_exhaust() -> void:
 	var warping: bool = main.travel.get("phase", "") == "travel"
 	var hot := boosting or warping
-	var power := 1.6 if hot else absf(throttle)
-	var col := Color(0.55, 0.85, 1.0) if hot else Color(1.0, 0.62, 0.28)
+	var power := 1.5 if hot else absf(throttle)
+	var col := Color(0.66, 0.84, 1.0) if hot else Color(0.5, 0.68, 1.0)
+	var burn: float = (minf(power, 1.0) * 0.85 + 0.15) if thrusting else 0.0
 	for g in _glows:
-		g.visible = thrusting
-		g.scale = Vector3.ONE * (0.6 + 0.5 * power + randf_range(-0.05, 0.05))
-		(g.material_override as StandardMaterial3D).albedo_color = Color(col, 0.3 + 0.25 * minf(power, 1.0))
-	var length := _nozzle * ((8.0 if warping else 5.5) if hot else 1.5 + 3.0 * power)
+		var m: ShaderMaterial = g.material_override
+		m.set_shader_parameter("color", col)
+		m.set_shader_parameter("power", maxf(burn, 0.08))
+	var length := _nozzle * ((16.0 if warping else 11.0) if hot else 3.0 + 7.0 * power)
 	for pl in _plumes:
-		set_plume(pl, length * randf_range(0.95, 1.05), (minf(power, 1.0) * 0.9 + 0.1) if thrusting else 0.0, col)
-	for t in _trails:
-		t.emitting = thrusting and not warping and alive
-		t.color = Color(col, 0.1 + 0.18 * minf(power, 1.0))
+		set_plume(pl, length * randf_range(0.98, 1.02), burn, col)
+	for l in _lights:
+		l.light_color = col
+		l.light_energy = burn * (2.2 if hot else 1.4) * randf_range(0.93, 1.0)
+	Sfx.set_engine(burn if alive and main.mode in ["fly", "warp"] else 0.0, hot)
 
 
 func _collide_rocks() -> void:
@@ -355,6 +416,7 @@ func _collide_rocks() -> void:
 ## on target, within its elevation limits, and with a clear line past the hull.
 func _aim_turrets(delta: float, target: Vector3) -> void:
 	guns_ready = []
+	turret_why = []
 	for tu in turrets:
 		var base: Node3D = tu.base
 		var yaw_node: Node3D = tu.yaw
@@ -370,7 +432,10 @@ func _aim_turrets(delta: float, target: Vector3) -> void:
 		var mz: Vector3 = tu.muzzle.global_position
 		var barrel := (-pitch_node.global_basis.z).normalized()
 		var on_target := barrel.dot((target - mz).normalized()) > cos(TURRET_ON_TARGET)
-		guns_ready.append(reachable and on_target and can_fire(tu.muzzle, target))
+		var clear := can_fire(tu.muzzle, target)
+		guns_ready.append(reachable and on_target and clear)
+		turret_why.append("ready" if guns_ready[-1] else ("out of arc" if not reachable else ("swinging" if not on_target
+			else "hull in the way")))
 
 
 ## Can the gun at `muzzle` hit `aim` without its shot passing through the hull box?

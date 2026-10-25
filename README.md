@@ -28,7 +28,7 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 | Right-click | select whatever is under the crosshair |
 | C (or hold ALT) | free the cursor to click rows on the Overview and things in space |
 | 1 / 2 / 3 | approach / orbit / warp to the selected thing |
-| G | dock, jump through a gate, salvage, use |
+| G | jump through a gate, salvage, use; near a station, the docking autopilot |
 | V | survey scan: see what's in the asteroids around you |
 | SPACE (hold) | quick warp menu |
 | M / N | galaxy map / system map |
@@ -36,6 +36,11 @@ title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight` and 
 | Wheel / middle-click | zoom / put the camera back behind the ship |
 | F1 | photo mode (P saves a picture) |
 | F3 | debug screen, F11 fullscreen, ESC menu |
+
+Ships are heavy: speed builds up and bleeds off over a few seconds, and turns carry momentum.
+To **dock**, fly into a station's docking bay and on to the landing pad at the back (warping to a
+station drops you out in front of the bay, lined up on it). Near a station, G hands it to the
+docking autopilot.
 
 ## Building it yourself
 

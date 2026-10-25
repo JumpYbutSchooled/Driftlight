@@ -57,8 +57,6 @@ func _draw() -> void:
 	var links := 0
 	for s in Game.systems:
 		links += s.links.size()
-	var k := Game.WORLD_SCALE
-
 	var left := [
 		["Driftlight 3D (Godot %s)" % Engine.get_version_info().string, Color("ffe7a3")],
 		"%d fps   frame %.2f ms   physics %d Hz" % [Engine.get_frames_per_second(),
@@ -72,10 +70,10 @@ func _draw() -> void:
 		["SHIP", Color("9fd3ff")],
 		"%s (%s)   mode: %s" % [Game.SHIPS[Game.ship_id].name, Game.SHIPS[Game.ship_id]["class"], main.mode],
 		"XYZ: %.1f / %.1f / %.1f" % [p.position.x, p.position.y, p.position.z],
-		"Speed %.1f / %.0f m/s   drift %.1f deg off nose" % [speed, st.speed * k, drift],
+		"Speed %.1f / %.0f m/s   drift %.1f deg off nose" % [speed, p.top_speed(), drift],
 		"Heading %.1f deg   pitch %.1f deg" % [heading, pitch],
-		"Throttle %d%%   target %.0f m/s" % [roundi(p.throttle * 100.0), p.throttle * st.speed * k],
-		"Turn rate %.2f rad/s   nose is %.1f deg behind your aim" % [st.turn, lag],
+		"Throttle %d%%   target %.0f m/s" % [roundi(p.throttle * 100.0), p.throttle * p.top_speed()],
+		"Turn rate %.2f / %.2f rad/s   nose is %.1f deg off the heading" % [p.ang_vel.length(), p.turn_rate(), lag],
 		"Hull %.1f / %.0f   Shield %.1f / %.0f   regen %.1f/s" % [p.hull, st.hull, p.shield, st.shield, st.regen],
 		"Shield recharge in %.1f s" % maxf(0.0, st.shield_delay - p._since_hit),
 		"Radius %.1f m   hull box %.1f x %.1f x %.1f m" % [p.radius, p.hull_box.x, p.hull_box.y, p.hull_box.z],

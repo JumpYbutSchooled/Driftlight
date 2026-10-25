@@ -1,6 +1,6 @@
 extends Node3D
-## One-shot 3D effects: explosions (white-hot flash, fireball, shockwave, streaking sparks, smoke, embers
-## and tumbling debris), rocks bursting into dust and chunks, impact sparks and the directional warp
+## One-shot 3D effects: explosions (a blinding flash, a fireball that burns out fast in vacuum, streaking
+## sparks, a thin puff of vented gas, embers and tumbling debris), rocks bursting into dust and chunks, impact sparks and the directional warp
 ## particles. Built from CPU particles with glowing quads plus a short light flash; frees itself when
 ## everything has faded.
 
@@ -97,21 +97,6 @@ func _flash(color: Color, size_m: float, grow: float, time: float) -> void:
 	tw.tween_property(f, "transparency", 1.0, time)
 
 
-func _shockwave(s: float, color: Color) -> void:
-	var mi := MeshInstance3D.new()
-	var q := QuadMesh.new()
-	q.size = Vector2.ONE
-	mi.mesh = q
-	mi.material_override = Models.ring_mat(color)
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.rotation = Vector3(-PI / 2.0 + randf_range(-0.6, 0.6), randf() * TAU, randf_range(-0.5, 0.5))
-	mi.scale = Vector3.ONE * 2.0 * s
-	add_child(mi)
-	var tw := mi.create_tween().set_parallel()
-	tw.tween_property(mi, "scale", Vector3.ONE * 30.0 * s, 0.7).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUART)
-	tw.tween_property(mi, "transparency", 1.0, 0.7).set_ease(Tween.EASE_IN)
-
-
 ## Chunks that tumble away, each trailing a thin smoky ember stream.
 func _debris_burst(n: int, s: float, mesh_fn: Callable, mat: Material, trail: bool) -> void:
 	for i in n:
@@ -159,19 +144,18 @@ func explode(s: float, color: Color, rocky := false) -> void:
 		_rock_burst(s, color)
 		return
 	_flash(Color(1.0, 0.92, 0.75, 1.0), 9.0 * s, 2.4, 0.35)
-	# a fireball of billowing puffs cooling from white through orange to dark red
-	var fire := _burst(int(14 * s) + 8, Color.WHITE, 9.0 * s, 1.0, 3.4 * s)
+	# a fireball cooling from white through orange to dark red; with no air to feed it, it burns out fast
+	var fire := _burst(int(14 * s) + 8, Color.WHITE, 11.0 * s, 0.55, 3.0 * s)
 	fire.lifetime_randomness = 0.4
 	fire.color_ramp = _ramp([Color(1, 1, 0.9, 1), Color(1, 0.72, 0.3, 0.95), Color(1, 0.32, 0.08, 0.6), Color(0.3, 0.06, 0.04, 0.0)],
 		[0.0, 0.18, 0.5, 1.0])
 	fire.scale_amount_curve = _curve([Vector2(0, 0.4), Vector2(0.3, 1.0), Vector2(1, 1.4)])
 	_burst(int(10 * s) + 4, color, 16.0 * s, 0.7, 2.0 * s)
 	_streaks(int(28 * s) + 10, Color(1.0, 0.85, 0.5), 48.0 * sqrt(s), 0.8, 0.12 + 0.08 * s, 1.2 + 0.8 * s)
-	_shockwave(s, color.lerp(Color(1.0, 0.8, 0.55), 0.5))
-	# smoke that hangs around after the fire is out
-	var smoke := _burst(int(8 * s) + 5, Color.WHITE, 5.0 * s, 2.8, 4.8 * s, false)
+	# vented gas: a thin, fast-spreading haze that thins to nothing (no rolling smoke in vacuum)
+	var smoke := _burst(int(8 * s) + 5, Color.WHITE, 9.0 * s, 1.6, 4.8 * s, false)
 	smoke.lifetime_randomness = 0.3
-	smoke.color_ramp = _ramp([Color(0.3, 0.22, 0.18, 0.0), Color(0.2, 0.18, 0.2, 0.55), Color(0.1, 0.1, 0.12, 0.0)], [0.0, 0.12, 1.0])
+	smoke.color_ramp = _ramp([Color(0.3, 0.26, 0.24, 0.0), Color(0.22, 0.2, 0.22, 0.22), Color(0.1, 0.1, 0.12, 0.0)], [0.0, 0.1, 1.0])
 	smoke.scale_amount_curve = _curve([Vector2(0, 0.4), Vector2(1, 1.8)])
 	# embers drifting off
 	var em := _burst(int(16 * s) + 8, Color(1.0, 0.6, 0.25), 12.0 * s, 2.2, 0.3 + 0.15 * s)
@@ -180,7 +164,7 @@ func explode(s: float, color: Color, rocky := false) -> void:
 	em.damping_max = 4.0
 	em.lifetime_randomness = 0.5
 	_debris_burst(int(3 + 3 * s), s, _box_mesh, Models.debris_mat(), true)
-	_light(Color("ffb060"), 45.0 * s, 10.0, 0.8)
+	_light(Color("ffc890"), 60.0 * s, 16.0, 0.6)
 
 
 ## An asteroid breaking up: a dust cloud, tumbling rock chunks and a few glints of its ore.

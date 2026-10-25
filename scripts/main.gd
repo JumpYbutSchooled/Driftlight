@@ -72,7 +72,14 @@ const SCAN_COOLDOWN := 8.0
 # how far from each kind of thing you drop out of warp, and how close you must be to use it
 const ARRIVE := {"station": 5000.0, "gate": 1100.0, "ore": 3600.0, "obelisk": 700.0, "spice": 450.0, "wormhole": 1100.0,
 	"wreck": 450.0}
-const USE_RANGE := {"station": 2200.0, "gate": 650.0, "obelisk": 280.0, "spice": 170.0, "wormhole": 500.0, "wreck": 260.0}
+const USE_RANGE := {"gate": 650.0, "obelisk": 280.0, "spice": 170.0, "wormhole": 500.0, "wreck": 260.0}
+# the station's docking bay, relative to the station (it opens toward -Z; see props.py station()): the middle
+# of its mouth, the landing pad at the back, and the box you fly into to dock
+const BAY_MOUTH := Vector3(0, 0, -540)
+const BAY_PAD := Vector3(0, -50, -345)
+const BAY_ZONE_C := Vector3(0, -15, -335)
+const BAY_ZONE_H := Vector3(80, 50, 65)
+const BAY_LANE := 800.0  # arriving at a station drops you this far out in front of the bay, lined up on it
 # rough size of each thing (for picking it on screen and where "approach" stops)
 const SIZE := {"station": 1000.0, "gate": 150.0, "ore": 2600.0, "obelisk": 60.0, "spice": 25.0, "wormhole": 160.0,
 	"wreck": 35.0}
@@ -138,6 +145,8 @@ var _scroll_base := Vector3.ZERO
 var _planet_base := Vector3.ZERO
 var _wormhole: Node3D
 var _wormhole_armed := true
+var _dock_armed := true  # false after undocking until you've left the docking zone
+var _docked_bay := {}  # the bay you're docked in (you undock onto its pad)
 var _pirate_timer := -1.0
 var _full_warned := 0
 var _shake := 0.0
@@ -163,6 +172,7 @@ func _ready() -> void:
 	add_child(world)
 	player = Ship.new()
 	player.main = self
+	player.process_priority = -10  # moves before this node updates the camera each frame
 	add_child(player)
 	camera = Camera3D.new()
 	camera.fov = FOV
@@ -243,13 +253,28 @@ func _build_environment() -> void:
 	env.ambient_light_color = Color(0.2, 0.22, 0.27)
 	env.ambient_light_energy = 0.26
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.0
+	# a filmic camera response: highlights roll off and desaturate like a real sensor instead of clipping
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.tonemap_exposure = 1.15
+	env.tonemap_white = 12.0
 	env.glow_enabled = true
-	env.glow_intensity = 0.6
+	env.glow_intensity = 0.5
 	env.glow_strength = 1.0
-	env.glow_bloom = 0.02
-	env.glow_hdr_threshold = 1.1
+	env.glow_bloom = 0.015
+	env.glow_hdr_threshold = 1.2
+	env.set_glow_level(0, 0.0)  # bloom from the wider levels only: a soft lens glow, not a hard halo
+	env.set_glow_level(1, 0.6)
+	env.set_glow_level(2, 0.8)
+	env.set_glow_level(3, 1.0)
+	env.set_glow_level(4, 0.8)
+	env.set_glow_level(5, 0.5)
+	# contact shadows in the hull plating and greebles
+	env.ssao_enabled = true
+	env.ssao_radius = 1.6
+	env.ssao_intensity = 2.2
+	env.ssao_power = 1.6
+	env.ssao_detail = 0.6
+	env.ssao_light_affect = 0.35
 	# muted, slightly hard colour
 	env.adjustment_enabled = true
 	env.adjustment_saturation = 0.78
@@ -275,6 +300,8 @@ func _build_environment() -> void:
 	sun.directional_shadow_split_3 = 0.4
 	sun.light_energy = 2.1
 	sun.shadow_opacity = 1.0
+	sun.light_angular_distance = 0.6  # a real sun's disc: shadows sharp up close, softening with distance
+	sun.shadow_blur = 1.2
 	add_child(sun)
 
 
@@ -352,7 +379,6 @@ func _process(delta: float) -> void:
 	if photo:
 		_update_photo()
 		return
-	_update_camera(delta)
 	_update_screen_fx(delta)
 	# flying, the mouse is captured and swings the camera round the ship; C (or holding ALT) frees the
 	# cursor to click things. The warp menu reads raw mouse movement, so it captures the mouse too.
@@ -368,16 +394,21 @@ func _process(delta: float) -> void:
 		Input.mouse_mode = want_mouse
 	set_cursor("arrow" if want_mouse == Input.MOUSE_MODE_VISIBLE else "dot")
 	if mode == "title":
+		_update_camera(delta)
 		return
 	if not travel.is_empty():
 		_update_travel(delta)
+	player.turn_input = Vector3.ZERO
 	if mode == "fly":
-		_steer(delta)
+		_steer()
 		if not autopilot.is_empty():
 			_update_autopilot(delta)
 	if selected != null and not target_valid(selected):
 		selected = null
 	_scan_cd = maxf(0.0, _scan_cd - delta)
+	# the camera follows the ship once it has moved this frame (the ship runs first: see _ready), so the
+	# two never step out of time with each other
+	_update_camera(delta)
 	_aim_raycast()
 
 	var holding: bool = mode == "fly" and Input.is_action_pressed("warp_menu")
@@ -392,6 +423,8 @@ func _process(delta: float) -> void:
 
 	var near = _nearest_interactable() if mode == "fly" else null
 	hud.prompt = near.label if near else ""
+	if mode == "fly" and player.alive:
+		_check_docking()
 	hud.hover_text = aim_target.describe() if mode == "fly" and aim_target != null and is_instance_valid(aim_target) \
 		and aim_target.has_method("describe") else ""
 
@@ -418,19 +451,15 @@ func _process(delta: float) -> void:
 		Game.save_game()
 
 
-## Keys turn the ship: A/D yaw, R/F pitch, Q/E roll, at the ship's turn rate. They swing `aim` (the
-## heading the ship steers to); taking the controls hands them back from the autopilot.
-func _steer(delta: float) -> void:
+## Keys turn the ship: A/D yaw, R/F pitch, Q/E roll. The ship spins up and down with momentum (see
+## ship._turn); taking the controls hands them back from the autopilot.
+func _steer() -> void:
 	var yaw := Input.get_axis("yaw_right", "yaw_left")
 	var pitch := Input.get_axis("pitch_down", "pitch_up")
 	var roll := Input.get_axis("roll_left", "roll_right")
-	if yaw == 0.0 and pitch == 0.0 and roll == 0.0:
-		return
-	cancel_autopilot("Manual control")
-	var rate: float = player.st.turn * 1.1
-	aim = aim.rotated(aim.y.normalized(), yaw * rate * delta)
-	aim = aim.rotated(aim.x.normalized(), pitch * rate * delta)
-	aim = aim.rotated((-aim.z).normalized(), roll * rate * delta).orthonormalized()
+	player.turn_input = Vector3(pitch, yaw, roll)
+	if yaw != 0.0 or pitch != 0.0 or roll != 0.0:
+		cancel_autopilot("Manual control")
 
 
 ## Is the cursor freed for clicking (C toggles it, holding ALT frees it for a moment)?
@@ -484,6 +513,7 @@ func _aim_raycast() -> void:
 	var o := camera.project_ray_origin(reticle)
 	var d := camera.project_ray_normal(reticle)
 	var best := 6000.0
+	var shoot := 6000.0  # civilian ships can be picked out but not shot, so the turrets look past them
 	aim_target = null
 	for group in ["pirates", "crates", "asteroids", "npcs"]:
 		for n in get_tree().get_nodes_in_group(group):
@@ -493,7 +523,9 @@ func _aim_raycast() -> void:
 			if t > 0.0 and t < best:
 				best = t
 				aim_target = n
-	aim_point = o + d * (best if aim_target else 450.0)
+			if t > 0.0 and t < shoot and group != "npcs":
+				shoot = t
+	aim_point = o + d * (shoot if shoot < 6000.0 else 450.0)
 
 
 static func _ray_sphere(o: Vector3, d: Vector3, c: Vector3, r: float) -> float:
@@ -608,8 +640,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("interact") and mode == "fly":
 		var near = _nearest_interactable()
+		var st := station_lm()
 		if near:
 			near.action.call()
+		elif not st.is_empty() and player.position.distance_to(st.pos) < 3500.0:
+			select(st)
+			order("use")  # near a station: the autopilot flies you into its docking bay
 	elif event.is_action_pressed("galaxy_map"):
 		if galaxy_map.visible:
 			close_maps()
@@ -730,6 +766,62 @@ func _nearest_interactable():
 	return best
 
 
+## The station here, if any (its landmark, with the "bay").
+func station_lm() -> Dictionary:
+	for lm in landmarks:
+		if lm.kind == "station":
+			return lm
+	return {}
+
+
+static func in_box(p: Vector3, c: Vector3, h: Vector3) -> bool:
+	var v := (p - c).abs()
+	return v.x < h.x and v.y < h.y and v.z < h.z
+
+
+## Docking: fly into the station's docking bay, onto the pad at the back. Near the station the prompt
+## says so (and that G lets the autopilot fly you in).
+func _check_docking() -> void:
+	var lm := station_lm()
+	if lm.is_empty():
+		return
+	var bay: Dictionary = lm.bay
+	var inside := in_box(player.position, bay.zone_c, bay.zone_h)
+	if not inside:
+		_dock_armed = true
+	elif _dock_armed:
+		cancel_autopilot()
+		_docked_bay = bay
+		lm.action.call()
+		return
+	if hud.prompt == "" and player.position.distance_to(lm.pos) < 3500.0 and not inside:
+		hud.prompt = "Fly into the docking bay to dock   -   G: docking autopilot" if autopilot.get("mode", "") != "dock" \
+			else "Docking autopilot engaged"
+
+
+## Where the docking autopilot heads next: lined up out in front of the bay's mouth first (round the
+## station if it's in the way), then straight in to the pad.
+func _dock_goal(lm: Dictionary) -> Vector3:
+	var bay: Dictionary = lm.bay
+	var p: Vector3 = player.position
+	var rel: Vector3 = p - bay.mouth
+	var along: float = rel.dot(bay.out)  # metres out in front of the mouth (negative: inside the bay)
+	var lateral: float = (rel - bay.out * along).length()
+	if (along < 30.0 and lateral < 90.0) or (along >= 0.0 and along < BAY_LANE * 1.4 and lateral < 40.0 + along * 0.12):
+		return bay.pad
+	var goal: Vector3 = bay.mouth + bay.out * 450.0
+	var c: Vector3 = lm.pos
+	var seg := goal - p
+	var t := clampf((c - p).dot(seg) / maxf(seg.length_squared(), 1.0), 0.0, 1.0)
+	if (p + seg * t).distance_to(c) < 850.0:
+		var side: Vector3 = p - c
+		side -= bay.out * side.dot(bay.out)
+		if side.length() < 1.0:
+			side = Vector3.RIGHT
+		goal = c + side.normalized() * 1150.0 + bay.out * 300.0
+	return goal
+
+
 # ---------------------------------------------------------------- locations
 
 func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
@@ -804,6 +896,11 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 		dir = Vector3(cos(a), -0.12, sin(a)).normalized()
 	player.position = first.pos - dir * first.arrive
 	aim = Basis.looking_at((first.pos - player.position).normalized(), Vector3.UP)
+	if first.has("bay"):
+		# traffic control drops you into the station's approach lane, lined up on the docking bay
+		player.position = first.bay.mouth + first.bay.out * BAY_LANE + Vector3(randf_range(-60, 60), randf_range(-20, 20), 0)
+		aim = Basis.looking_at((first.bay.mouth - player.position).normalized(), Vector3.UP)
+	_dock_armed = true
 	player.basis = aim
 	player.stop()
 	camera.global_position = player.position + aim.y * 6.0 + aim.z * 18.0 * zoom
@@ -945,8 +1042,14 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			st.position = at
 			world.add_child(st)
 			_light(at + Vector3(0, 450, 0), Color("7ff0ff"), 2600.0, 2.5)
-			_light(at + Vector3(0, 0, -420), Color("ffd27a"), 1000.0, 3.0)  # spill from the hangar mouth
-			_landmark(loc.name, "station", "station", at, open_station.bind(loc), "[G]  Dock at %s" % loc.name)
+			# the docking bay opens toward -Z: you fly in through the mouth and dock by reaching the pad
+			var bay := {"mouth": at + BAY_MOUTH, "out": Vector3.FORWARD, "pad": at + BAY_PAD, "zone_c": at + BAY_ZONE_C,
+				"zone_h": BAY_ZONE_H, "loc": loc}
+			var lm := _landmark(loc.name, "station", "station", at, open_station.bind(loc), "")
+			lm["bay"] = bay
+			for z in [-320.0, -420.0, -515.0]:  # lamps along the bay roof
+				_light(at + Vector3(0, 45, z), Color("ffe9cc"), 190.0, 2.4)
+			_light(at + Vector3(0, -40, -600), Color("ffe2b0"), 260.0, 1.2)  # floodlight spill out of the mouth
 			# the citadel's main masses (built in tools/blender/props.py, shown 3x), so you fly round it
 			_obstacle("capsule", {"a": at + Vector3(0, -375, 0), "b": at + Vector3(0, 360, 0), "r": 138.0})
 			_obstacle("torus", {"c": at + Vector3(0, 135, 0), "n": Vector3.UP, "R": 390.0, "r": 57.0})
@@ -954,8 +1057,19 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			_obstacle("cyl", {"c": at, "R": 258.0, "h": 108.0})
 			_obstacle("cyl", {"c": at + Vector3(0, 210, 0), "R": 186.0, "h": 72.0})
 			_obstacle("cyl", {"c": at + Vector3(0, -240, 0), "R": 190.0, "h": 45.0})
-			_obstacle("box", {"c": at + Vector3(0, 0, -232.5), "h": Vector3(99, 60, 114)})
 			_obstacle("sphere", {"c": at + Vector3(0, -405, 0), "r": 110.0})
+			# the docking bay: a hollow shell (walls to the inner faces of the ribs), the block joining it to the
+			# hub, the frame round the mouth, and the ships parked down the sides
+			_obstacle("box", {"c": at + Vector3(0, 0, -187.5), "h": Vector3(138, 85.5, 82.5)})
+			for sx in [-1, 1]:
+				_obstacle("box", {"c": at + Vector3(sx * 123.75, 0, -405), "h": Vector3(14.25, 85.5, 135)})
+				_obstacle("box", {"c": at + Vector3(sx * 137.25, 0, -546), "h": Vector3(17.25, 85.5, 7.5)})
+				for z in [-330.0, -420.0, -495.0]:
+					_obstacle("box", {"c": at + Vector3(sx * 84, -54, z), "h": Vector3(17, 10, 38)})
+			_obstacle("box", {"c": at + Vector3(0, 71.25, -405), "h": Vector3(138, 14.25, 135)})
+			_obstacle("box", {"c": at + Vector3(0, -76.25, -405), "h": Vector3(138, 9.25, 135)})
+			for sy in [-1, 1]:
+				_obstacle("box", {"c": at + Vector3(0, sy * 76.5, -546), "h": Vector3(154.5, 8.0, 7.5)})
 			for sx in [-1, 1]:
 				_obstacle("box", {"c": at + Vector3(sx * 735, -90, 0), "h": Vector3(198, 9, 216)})
 			for i in 4:  # docking arms on the diagonals, low down, each ending in a docking module
@@ -1119,10 +1233,11 @@ func _spawn_traffic(sys: Dictionary, rng: RandomNumberGenerator) -> void:
 		for i in rng.randi_range(3, 6):
 			var n := Npc.new()
 			n.main = self
-			n.home = station.pos + Vector3(0, 0, -420)  # just outside the hangar mouth
-			n.home_out = Vector3.FORWARD
+			n.home = station.bay.pad + Vector3(rng.randf_range(-30, 30), 0, rng.randf_range(-30, 30))  # on the pad
+			n.lane = station.bay.mouth + station.bay.out * 350.0  # lined up in front of the bay
+			n.home_out = station.bay.out
 			n.route = route
-			n.position = route[rng.randi() % route.size()].lerp(n.home, rng.randf())
+			n.position = route[rng.randi() % route.size()].lerp(n.lane, rng.randf())
 			world.add_child(n)
 			n.setup("hauler", ["mule", "ark", "leviathan", "halberd", "prospector", "aegis", "monarch"][rng.randi() % 7], rng)
 	if not field.is_empty():
@@ -1470,6 +1585,9 @@ func order(what: String) -> void:
 		"use":
 			if not (t is Dictionary and t.has("action")):
 				return
+			if t.has("bay"):
+				_start_autopilot("dock", t, 0.0)  # stations: fly into the docking bay
+				return
 			if d <= t.radius:
 				t.action.call()
 			else:
@@ -1505,6 +1623,7 @@ func autopilot_text() -> String:
 	var d: float = player.position.distance_to(target_pos(autopilot.target))
 	match autopilot.mode:
 		"orbit": return "Orbiting at %s" % UI.dist(autopilot.range)
+		"dock": return "Docking approach  -  %s to the pad" % UI.dist(player.position.distance_to(autopilot.target.bay.pad))
 		"use": return "Approaching to %s  -  %s to go" % [target_info(autopilot.target).use.to_lower(), UI.dist(maxf(0.0, d - autopilot.range))]
 	return "Approaching  -  %s to go" % UI.dist(maxf(0.0, d - autopilot.range))
 
@@ -1516,10 +1635,19 @@ func _update_autopilot(delta: float) -> void:
 		autopilot = {}
 		return
 	var to: Vector3 = target_pos(t) - player.position
+	if autopilot.mode == "dock":
+		to = _dock_goal(t) - player.position
 	var d := to.length()
-	var top: float = player.st.speed * Game.WORLD_SCALE
+	var top: float = player.top_speed()
 	var dir := to / maxf(d, 0.01)
 	match autopilot.mode:
+		"dock":
+			# full ahead to the approach lane, then in under half throttle, easing off toward the pad
+			var lined_up: bool = _dock_goal(t) == t.bay.pad
+			player.throttle = clampf(d / (top * 5.0), 0.25, 0.5) if lined_up else 1.0
+			# don't push on until the nose is roughly where we're going
+			if player.forward().dot(dir) < 0.7:
+				player.throttle = minf(player.throttle, 0.15)
 		"approach", "use":
 			var left: float = d - autopilot.range
 			if left <= 0.0:
@@ -1573,6 +1701,11 @@ func warp_local(t) -> void:
 		# land within reach of a station or gate (EVE's "warp to 0"), or at the edge of an ore field
 		stop = 3000.0 if t.kind == "ore" else maxf(t.radius * 0.6, t.size + 150.0)
 	var dest := tp - to.normalized() * minf(stop, d * 0.5)
+	if t is Dictionary and t.has("bay"):
+		# a station: drop out in its approach lane, in front of the docking bay
+		dest = t.bay.mouth + t.bay.out * BAY_LANE
+		to = dest - player.position
+		d = to.length()
 	cancel_autopilot()
 	_travel_to("local", target_info(t).name, 1.2, 2.5 + d / 3500.0, Callable(), Color(0.55, 0.8, 1.0), Vector2(to.x, to.z),
 		{"heading3": to.normalized(), "from": player.position, "to": dest})
@@ -1717,13 +1850,9 @@ func _update_travel(delta: float) -> void:
 	warp_scroll += fwd * _scroll_speed * delta
 	match travel.phase:
 		"align":
-			# swing the aim (and so the ship) round to face the destination before the drive can charge
-			var tq: Quaternion = (travel.want as Basis).get_rotation_quaternion()
-			var aq := aim.get_rotation_quaternion()
-			var ang := aq.angle_to(tq)
-			var rate := maxf(player.st.turn * 1.15, 0.8)
-			aim = Basis(aq.slerp(tq, minf(1.0, rate * delta / maxf(ang, 0.0001))))
-			player.vel = player.vel.move_toward(Vector3.ZERO, 60.0 * delta)
+			# the ship swings round to face the destination (see ship._turn) before the drive can charge
+			aim = travel.want
+			player.vel = player.vel.move_toward(Vector3.ZERO, player.top_speed() * 0.6 * delta)
 			if fwd.angle_to(travel.heading) < 0.02:
 				travel.phase = "charge"
 				travel.t = 0.0
@@ -1732,7 +1861,7 @@ func _update_travel(delta: float) -> void:
 			var k: float = clampf(travel.t / travel.charge, 0.0, 1.0)
 			shake(k * 0.12)
 			# the ship starts rolling forward and the world begins to slide past
-			player.vel = fwd * player.st.speed * Game.WORLD_SCALE * 0.5 * k
+			player.vel = fwd * player.top_speed() * 0.5 * k
 			_scroll_speed = 220.0 * k * k * k
 			if travel.t >= travel.charge:
 				travel.phase = "travel"
@@ -1771,7 +1900,7 @@ func _update_travel(delta: float) -> void:
 				var f := _fx(player.position)
 				f.jet(50, Color(travel.color).lightened(0.5), fwd, 200.0, 20.0, 0.8)
 				f.jet(25, Color.WHITE, fwd, 260.0, 8.0, 0.5)
-				player.vel = fwd * player.st.speed * Game.WORLD_SCALE * 1.6
+				player.vel = fwd * player.top_speed() * 1.6
 				_fov_kick = -12.0
 				shake(0.3)
 		"exit":
@@ -1886,7 +2015,19 @@ func open_panel(kind: String, loc: Dictionary) -> void:
 
 func close_panel() -> void:
 	station_ui.hide()
+	var was_docked := mode == "docked"
 	mode = "fly"
+	if was_docked and not _docked_bay.is_empty():
+		# undock: released from the pad, drifting gently out toward the mouth
+		var bay := _docked_bay
+		_docked_bay = {}
+		player.position = bay.pad + Vector3(0, 4, 0)
+		aim = Basis.looking_at(bay.out, Vector3.UP)
+		player.basis = aim
+		player.stop()
+		player.vel = bay.out * 5.0
+		_dock_armed = false
+		snap_camera()
 
 
 func close_inventory() -> void:

@@ -168,7 +168,7 @@ func _draw_crosshair(_vs: Vector2) -> void:
 			var gx := c.x + (i - (guns.size() - 1) / 2.0) * 7.0
 			draw_circle(Vector2(gx, c.y + 24.0), 2.2, Color(0.75, 1.0, 0.85, 0.85) if guns[i] else Color(0.93, 0.4, 0.35, 0.45))
 			clear += 1 if guns[i] else 0
-		if clear == 0:
+		if clear == 0 and Input.is_action_pressed("fire"):
 			_text(Vector2(c.x - 150.0, c.y + 44.0), "no turret can bear", 13, Color(0.93, 0.48, 0.42, 0.8), HORIZONTAL_ALIGNMENT_CENTER, 300.0)
 	var nose: Vector3 = p.position + p.forward() * 300.0
 	if not cam.is_position_behind(nose):
@@ -185,6 +185,7 @@ func _draw_markers(vs: Vector2) -> void:
 	for it in main.landmarks:
 		_marker(vs, cam, it.pos, it.get("name", ""), it.get("icon", "station"), MARK, pp.distance_to(it.pos))
 	_draw_selection(vs, cam, pp)
+	_draw_bay(cam, pp)
 	_draw_self(vs, cam)
 	_draw_chunk_tags(cam, pp)
 	for pir in get_tree().get_nodes_in_group("pirates"):
@@ -255,6 +256,30 @@ func _draw_selection(vs: Vector2, cam: Camera3D, pp: Vector3) -> void:
 	if not t is Dictionary:
 		_text(sp + Vector2(-200, half + 20), "%s  %s" % [main.target_info(t).name, UI.dist(pp.distance_to(pos))], 15, c,
 			HORIZONTAL_ALIGNMENT_CENTER, 400)
+
+
+## Near a station, corner brackets round the mouth of its docking bay (and its distance), so it's easy to
+## line up on. Fly in to dock.
+func _draw_bay(cam: Camera3D, pp: Vector3) -> void:
+	var lm: Dictionary = main.station_lm()
+	if lm.is_empty() or pp.distance_to(lm.pos) > 9000.0 or pp.distance_to(lm.bay.mouth) < 300.0:
+		return  # (and not once you're at the mouth or inside: then it's all round you)
+	var m: Vector3 = lm.bay.mouth
+	var pts := []
+	for c in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+		var w: Vector3 = m + Vector3(c.x * 120.0, c.y * 67.5, 0.0)  # the mouth is 240 x 135 m, across X and Y
+		if cam.is_position_behind(w):
+			return
+		pts.append(cam.unproject_position(w))
+	var col := Color(0.5, 0.95, 1.0, 0.75)
+	for i in 4:
+		var a: Vector2 = pts[i]
+		var b: Vector2 = pts[(i + 1) % 4]
+		draw_line(a, a.lerp(b, 0.2), col, 1.5)
+		draw_line(b, b.lerp(a, 0.2), col, 1.5)
+	var top: Vector2 = (pts[2] + pts[3]) / 2.0
+	_text(top + Vector2(-150, -12), "DOCKING BAY  %s" % UI.dist(pp.distance_to(m)), 14, col, HORIZONTAL_ALIGNMENT_CENTER, 300.0,
+		UI.title)
 
 
 ## Zoomed far out your ship is a speck: mark it.

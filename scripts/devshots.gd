@@ -6,6 +6,7 @@ const Pirate = preload("res://scripts/pirate.gd")
 
 var main
 var dir := ""
+var _peaks := {"Music": -200.0, "SFX": -200.0}  # loudest each audio bus got during the tour, dB
 
 
 func _ready() -> void:
@@ -16,6 +17,12 @@ func _ready() -> void:
 	if dir == "":
 		dir = OS.get_user_data_dir()
 	_run()
+
+
+func _process(_delta: float) -> void:
+	for bus in _peaks:
+		var i := AudioServer.get_bus_index(bus)
+		_peaks[bus] = maxf(_peaks[bus], maxf(AudioServer.get_bus_peak_volume_left_db(i, 0), AudioServer.get_bus_peak_volume_right_db(i, 0)))
 
 
 func _wait(n: int) -> void:
@@ -41,6 +48,33 @@ func _find(test: Callable) -> Array:
 	return [-1, -1]
 
 
+## Over 90 frames (holding `action`, if any): the frame-to-frame change in the ship's on-screen position,
+## minus its average drift, so only the jumps are left. Also the frame time.
+func _jitter(p, action: String) -> String:
+	if action != "":
+		Input.action_press(action)
+	await _secs(1.2)
+	var pts := []
+	var t0 := Time.get_ticks_usec()
+	for i in 91:
+		await get_tree().process_frame
+		pts.append(main.camera.unproject_position(p.global_position))
+	var ms := (Time.get_ticks_usec() - t0) / 91000.0
+	if action != "":
+		Input.action_release(action)
+	var steps := []
+	var mean := Vector2.ZERO
+	for i in 90:
+		steps.append(pts[i + 1] - pts[i])
+		mean += pts[i + 1] - pts[i]
+	mean /= 90.0
+	var dev := []
+	for s in steps:
+		dev.append((s - mean).length())
+	dev.sort()
+	return "median %.2f px, worst %.2f px per frame (%.1f ms frames)" % [dev[45], dev[89], ms]
+
+
 func _run() -> void:
 	await _secs(1.5)
 	await _shot("01_title")
@@ -49,15 +83,18 @@ func _run() -> void:
 	var p = main.player
 	print("ship model: muzzles %d engines %d radius %.1f hull %s" % [p.muzzles.size(), p.engines.size(), p.radius, str(p.hull_box)])
 	print("turrets %d" % p.turrets.size())
-	# turn with the keys (A for 1.5 seconds); the camera stays put, since only the mouse moves it
+	# turn with the keys: the ship spins up while A is held and spins down after it's let go; the camera
+	# stays put, since only the mouse moves it
 	var cam_before: Basis = main.camera.global_basis
 	var before: Vector3 = p.forward()
 	Input.action_press("yaw_left")
 	await _secs(1.5)
+	var held: Vector3 = p.forward()
+	var rate_held: float = p.ang_vel.length()
 	Input.action_release("yaw_left")
-	await _secs(0.5)
-	print("keyboard turn: nose swung %.0f deg, %.1f deg off the heading, camera turned %.1f deg" % [
-		rad_to_deg(before.angle_to(p.forward())), rad_to_deg(p.forward().angle_to(-main.aim.z)),
+	await _secs(1.5)
+	print("keyboard turn: %.0f deg while held (spinning %.2f of %.2f rad/s), %.0f deg more coasting after, now %.3f rad/s, camera turned %.1f deg" % [
+		rad_to_deg(before.angle_to(held)), rate_held, p.turn_rate(), rad_to_deg(held.angle_to(p.forward())), p.ang_vel.length(),
 		rad_to_deg((-cam_before.z).angle_to(-main.camera.global_basis.z))])
 	# the mouse swings the camera, not the ship
 	var mm := InputEventMouseMotion.new()
@@ -67,17 +104,79 @@ func _run() -> void:
 	await _secs(0.3)
 	print("mouse look: camera yaw %.0f deg, ship turned %.1f deg" % [rad_to_deg(main._cam_yaw), rad_to_deg(nose.angle_to(p.forward()))])
 	main.snap_camera()
-	p.throttle = 0.6
-	await _secs(1.0)
+	p.throttle = 1.0
+	await _secs(3.0)
+	print("throttle: %.1f m/s after 3 s at full throttle (top %.1f), engine rumble playing %s at %.1f dB" % [p.vel.length(),
+		p.top_speed(), Sfx._engine.playing, Sfx._engine.volume_db])
+	var voices: int = Sfx._voices.filter(func(v): return v.p.playing).size()
+	print("music: organ ready %s, %d organ voices sounding, chord %d" % [Sfx._organ != null, voices, Sfx._chord])
+	# smoothness: how far the ship jumps about on screen from one frame to the next while cruising, and
+	# while turning (the chase camera should hold it steady: well under a pixel)
+	print("screen jitter cruising: %s" % await _jitter(p, ""))
+	print("screen jitter turning: %s" % await _jitter(p, "yaw_left"))
 	await _shot("02_station")
 	p.throttle = 0.0
-	# in front of the citadel's hangar, looking up at it
-	p.position = Vector3(780, 180, -1860)
-	main.aim = Basis.looking_at((Vector3(0, 60, 0) - p.position).normalized(), Vector3.UP)
+	# out in front of the docking bay, lined up on it
+	var st: Dictionary = main.station_lm()
+	var bay: Dictionary = st.bay
+	p.position = bay.mouth + bay.out * 380.0 + Vector3(60, 30, 0)
+	main.aim = Basis.looking_at((bay.pad - p.position).normalized(), Vector3.UP)
+	p.basis = main.aim
+	p.stop()
+	main.snap_camera()
+	await _secs(1.0)
+	print("turrets lined up on the bay: %s" % str(p.turret_why))
+	await _secs(0.8)
+	print("  and a moment later: %s" % str(p.turret_why))
+	if "--quick" in OS.get_cmdline_user_args():  # (just the start of the tour, for quick checks)
+		get_tree().quit()
+		return
+	await _shot("02b_bay_approach")
+	# inside the bay
+	p.position = bay.mouth - bay.out * 60.0 + Vector3(0, -10, 0)
+	main.aim = Basis.looking_at((bay.pad - p.position).normalized(), Vector3.UP)
 	p.basis = main.aim
 	main.snap_camera()
 	await _secs(0.8)
-	await _shot("02b_station_close")
+	await _shot("02e_bay_inside")
+	# fly on in to the pad: that docks
+	p.throttle = 1.0
+	p.vel = p.forward() * 30.0
+	var t0 := Time.get_ticks_msec()
+	while main.mode != "docked" and Time.get_ticks_msec() - t0 < 30000:
+		await get_tree().process_frame
+	print("docking by flying in: mode %s after %.1f s" % [main.mode, (Time.get_ticks_msec() - t0) / 1000.0])
+	await _secs(0.5)
+	await _shot("02f_docked")
+	main.close_panel()
+	await _secs(1.5)
+	print("undocked: mode %s, %.0f m from the pad, facing out %.2f, moving %.1f m/s" % [main.mode, p.position.distance_to(bay.pad),
+		p.forward().dot(bay.out), p.vel.length()])
+	await _shot("02g_undocked")
+	# the docking autopilot from behind the station: it has to go round, line up and fly in
+	p.position = st.pos - bay.out * 1500.0 + Vector3(0, 100, 0)
+	main.aim = Basis.looking_at((st.pos - p.position).normalized(), Vector3.UP)
+	p.basis = main.aim
+	p.stop()
+	main.select(st)
+	main.order("use")
+	Engine.time_scale = 8.0
+	t0 = Time.get_ticks_msec()
+	var mid_shot := false
+	while main.mode != "docked" and Time.get_ticks_msec() - t0 < 90000:
+		if not mid_shot and p.position.distance_to(bay.mouth) < 500.0:
+			mid_shot = true
+			Engine.time_scale = 1.0
+			await _secs(0.3)
+			await _shot("02h_autopilot_lineup")
+			Engine.time_scale = 8.0
+		await get_tree().process_frame
+	Engine.time_scale = 1.0
+	print("docking autopilot from behind: mode %s after %.1f s real (x8), %.0f m from the pad" % [main.mode,
+		(Time.get_ticks_msec() - t0) / 1000.0, p.position.distance_to(bay.pad)])
+	if main.mode == "docked":
+		main.close_panel()
+	await _secs(0.5)
 	# zoomed right out
 	main._zoom_to = 60.0
 	await _secs(1.5)
@@ -85,12 +184,21 @@ func _run() -> void:
 	main._zoom_to = 1.0
 	main.zoom = 1.0
 	await _secs(0.4)
-	# engine plumes at full throttle, seen from the side
+	# engine plumes at full throttle, seen from the side and from behind
 	p.throttle = 1.0
-	await _secs(0.8)
-	main.aim = main.aim.rotated(Vector3.UP, 1.2)
-	await _secs(0.25)
+	await _secs(1.5)
+	main._cam_yaw += 1.3
+	main._cam_pitch -= 0.12
+	await _secs(0.4)
 	await _shot("02c_plumes")
+	main.snap_camera()
+	main._zoom_to = 0.6
+	main.zoom = 0.6
+	await _secs(0.4)
+	print("turrets leaving the bay: %s" % str(p.turret_why))
+	await _shot("02i_plumes_behind")
+	main._zoom_to = 1.0
+	main.zoom = 1.0
 	p.throttle = 0.0
 
 	# the Core Belt: survey it, pick a vein on the overview and approach it
@@ -272,4 +380,5 @@ func _run() -> void:
 	main.debug_ui.visible = true
 	await _secs(0.3)
 	await _shot("08_titan_f3")
+	print("audio peaks over the tour: music %.1f dB, sfx %.1f dB" % [_peaks.Music, _peaks.SFX])
 	get_tree().quit()

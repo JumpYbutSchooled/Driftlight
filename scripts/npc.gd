@@ -1,11 +1,11 @@
 extends Node3D
-## Civilian traffic that makes a location feel lived in. Haulers come out of the station hangar, run
-## out to far points (the gate, the ore field, empty space) and come back in to dock. Miners hover beside
+## Civilian traffic that makes a location feel lived in. Haulers lift off the pad in the station's docking
+## bay, fly out through its mouth, run out to far points (the gate, the ore field, empty space), then line
+## up in front of the bay again and fly back in to land. Miners hover beside
 ## asteroids working them with a mining beam, then move on to another rock. Harmless and untouchable,
 ## but you can select them and fly alongside.
 
 const Ship = preload("res://scripts/ship.gd")
-const Trail = preload("res://scripts/trail.gd")
 const NAMES := ["Patient Mule", "Long Haul", "Coreward", "Saltwind", "Ironbelly", "Lantern", "Quiet Margin",
 	"Brass Gull", "Halcyon", "Old Reliable", "Ninth Ledger", "Morrow", "Slow Comet", "Tallyman", "Weathervane",
 	"Second Wind", "Kettle", "Far Harbour", "Dust Choir", "Good Return"]
@@ -15,15 +15,16 @@ var role := "hauler"  # hauler or miner
 var ship_name := ""
 var radius := 6.0
 var speed := 80.0
-var home := Vector3.ZERO  # haulers: just outside the hangar mouth.  miners: the middle of the ore field
-var home_out := Vector3.FORWARD  # which way the hangar faces
+var home := Vector3.ZERO  # haulers: the landing pad in the docking bay.  miners: the middle of the ore field
+var lane := Vector3.ZERO  # haulers: out in front of the bay's mouth, where they line up to go in or out
+var home_out := Vector3.FORWARD  # which way the bay faces
+var _leg := ""  # haulers: "in" (lining up, then into the bay) or "out" (leaving it)
 var route := []  # far points a hauler runs to
 var model: Node3D
 var vel := Vector3.ZERO
 var _goal := Vector3.ZERO
 var _docked := 0.0  # seconds left inside the station
 var _plumes := []
-var _trails := []
 var _rock: Node3D
 var _work := 0.0
 var _work_len := 30.0
@@ -39,17 +40,13 @@ func setup(kind: String, model_id: String, rng: RandomNumberGenerator) -> void:
 	add_child(model)
 	var size := Models.size(model_id)
 	radius = maxf(size.x, size.z) * 0.5
-	speed = rng.randf_range(70.0, 130.0) if role == "hauler" else rng.randf_range(50.0, 80.0)
+	speed = rng.randf_range(20.0, 34.0) if role == "hauler" else rng.randf_range(12.0, 20.0)
 	var nozzle := clampf(size.x * 0.18 * 0.55, 0.6, 3.0)
 	for e in Models.markers(model, "Engine"):
 		var pl := Ship.plume(nozzle)
 		e.add_child(pl)
 		_plumes.append(pl)
-		var t := Trail.new()
-		t.width = nozzle * 0.5
-		t.color = Color(1.0, 0.62, 0.3, 0.2)
-		e.add_child(t)
-		_trails.append(t)
+
 	if role == "miner":
 		_beam = MeshInstance3D.new()
 		var cm := CylinderMesh.new()
@@ -87,18 +84,24 @@ func _next_goal() -> void:
 		_work = 0.0
 		_work_len = randf_range(25.0, 50.0)
 	else:
-		_goal = route.pick_random() if not route.is_empty() and randf() < 0.6 else home
+		if not route.is_empty() and randf() < 0.6:
+			_goal = route.pick_random()
+			_leg = ""
+		else:
+			_goal = lane  # head home: line up in front of the bay first
+			_leg = "in"
 
 
 func _process(delta: float) -> void:
 	if _docked > 0.0:
 		_docked -= delta
 		if _docked <= 0.0:
-			# out of the hangar again
+			# lift off and fly out of the bay
 			visible = true
 			position = home
-			vel = home_out * speed * 0.6
-			_goal = route.pick_random() if not route.is_empty() else home + home_out * 4000.0
+			vel = home_out * speed * 0.2
+			_goal = lane
+			_leg = "out"
 		return
 	var to := _goal - position
 	var d := to.length()
@@ -111,8 +114,15 @@ func _process(delta: float) -> void:
 		want = to / maxf(d, 0.01) * minf(speed, d * 0.5 + 8.0)
 		if d < 40.0:
 			if role == "hauler" and _goal.distance_to(home) < 1.0:
-				visible = false  # docked
+				visible = false  # landed
 				_docked = randf_range(15.0, 45.0)
+				return
+			if role == "hauler" and _leg == "in" and _goal.distance_to(lane) < 1.0:
+				_goal = home  # lined up: straight in to the pad
+				return
+			if role == "hauler" and _leg == "out":
+				_leg = ""
+				_goal = route.pick_random() if not route.is_empty() else lane + home_out * 4000.0
 				return
 			_next_goal()
 	vel = vel.move_toward(want, speed * 0.6 * delta)
@@ -126,8 +136,6 @@ func _process(delta: float) -> void:
 	var power := clampf(vel.length() / speed, 0.0, 1.0)
 	for pl in _plumes:
 		Ship.set_plume(pl, 2.0 + 4.0 * power, 0.2 + 0.7 * power, Color(1.0, 0.62, 0.28))
-	for t in _trails:
-		t.emitting = power > 0.3
 
 
 ## Hover by the rock with the mining beam on it; move on after a while (they don't really use the rock up).
