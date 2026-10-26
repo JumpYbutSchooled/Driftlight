@@ -18,6 +18,8 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--docktest" in OS.get_cmdline_user_args():
+		_docktest()
 	elif "--gatetest" in OS.get_cmdline_user_args():
 		_gatetest()
 	elif "--phototest" in OS.get_cmdline_user_args():
@@ -216,6 +218,53 @@ func _jumptest() -> void:
 	print("JUMPTEST camera turned %.2f deg and the aim %.2f deg across the arrival  %s" % [cam_turn, aim_turn,
 		"PASS" if cam_turn < 1.0 and aim_turn < 1.0 else "FAIL"])
 	print("JUMPTEST map gone afterwards: %s" % (not main.jump_map.visible))
+	get_tree().quit()
+
+
+## `-- --autoshot --docktest [--shots]`: the galaxy and system maps (and the inventory) opened while docked, and
+## closed back to the station.
+func _docktest() -> void:
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	await _secs(1.5)
+	var lm: Dictionary = main.station_lm()
+	main._docked_bay = lm.bay
+	main.mode = "docking"
+	main.player.throttle = 0.0
+	main.dock_screen.dock(lm.name, lm.action)  # (the real thing: fade to black, then the station opens over it)
+	await _secs(2.0)
+	print("DOCKTEST docked: mode %s, station menu %s" % [main.mode, main.station_ui.visible])
+	var ok := true
+	for which in ["galaxy", "system", "inventory", "fitting"]:
+		main.open_menu(which)
+		await _secs(0.8)
+		var shown: bool = {"galaxy": main.galaxy_map.visible, "system": main.system_map.visible, "inventory": main.inventory.visible,
+			"fitting": main.fitting.visible}[which]
+		print("DOCKTEST %s opened: mode %s, menu showing %s, station menu hidden %s, size %s" % [which, main.mode, shown,
+			not main.station_ui.visible, str({"galaxy": main.galaxy_map.size, "system": main.system_map.size, "inventory": main.inventory.size,
+			"fitting": main.fitting.size}[which])])
+		if "--shots" in OS.get_cmdline_user_args():
+			await _shot("docked_%s" % which)
+		ok = ok and shown and main.mode in ["map", "inventory", "fitting"]
+		# the black docked backdrop must be under the menu, or it hides it
+		var menu_node: Control = {"galaxy": main.galaxy_map, "system": main.system_map, "inventory": main.inventory,
+			"fitting": main.fitting}[which]
+		var covered: bool = main.dock_screen.visible and main.dock_screen._black > 0.5 and \
+			menu_node.get_index() < main.dock_screen.get_index()
+		print("DOCKTEST   backdrop black %.1f, drawn %s the %s  %s" % [main.dock_screen._black, "OVER" if covered else "under", which,
+			"FAIL (covered)" if covered else "ok"])
+		ok = ok and not covered
+		main.close_maps()
+		main.close_inventory()
+		main.close_fitting()
+		await _secs(0.4)
+		var back: bool = main.mode == "docked" and main.station_ui.visible
+		print("DOCKTEST   closed: back at the station %s (mode %s)" % [back, main.mode])
+		ok = ok and back
+	print("DOCKTEST RESULT: %s" % ("passed" if ok else "FAILED"))
 	get_tree().quit()
 
 

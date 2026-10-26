@@ -646,7 +646,7 @@ func _build_storage() -> void:
 	_section("STATION STORAGE", "cargo")
 	_note("One store, shared by every station. Whatever is in it is safe: if your ship is destroyed, everything it was carrying is lost - cargo, materials, spare weapons and modules, spices, probes. Building and buying draw on storage and your ship together.")
 	var auto := CheckButton.new()
-	auto.text = "Store everything automatically whenever I dock"
+	auto.text = "Store everything (except probes) automatically whenever I dock"
 	auto.focus_mode = FOCUS_NONE
 	auto.button_pressed = Game.auto_store
 	auto.toggled.connect(func(on): Game.auto_store = on)

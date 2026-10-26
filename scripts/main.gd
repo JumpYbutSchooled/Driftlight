@@ -254,9 +254,9 @@ func _ready() -> void:
 	target_panel = _ui(root, TargetPanel.new())
 	debug_ui = _ui(root, DebugUI.new())
 	warp_menu = _ui(root, WarpMenu.new())
+	dock_screen = _ui(root, DockScreen.new())  # the black docked backdrop: over the HUD, under every menu
 	system_map = _ui(root, SystemMap.new())
 	galaxy_map = _ui(root, GalaxyMap.new())
-	dock_screen = _ui(root, DockScreen.new())  # under the station menus, over everything else
 	station_ui = _ui(root, StationUI.new())
 	inventory = _ui(root, InventoryUI.new())
 	fitting = _ui(root, Fitting.new())
@@ -3089,7 +3089,7 @@ func open_station(loc: Dictionary) -> void:
 	player.heal_full()
 	Game.home = [Game.current_system, Game.current_loc]
 	Game.docked = true
-	if Game.auto_store and Game.store_all() > 0:
+	if Game.auto_store and Game.store_all(false) > 0:  # (probes stay on the ship)
 		Game.say("Everything you were carrying went into station storage (it's safe there).", Color("8cd8ff"))
 	Sfx.play("dock", -4.0)
 	var key := "%d:%d" % [Game.current_system, Game.current_loc]

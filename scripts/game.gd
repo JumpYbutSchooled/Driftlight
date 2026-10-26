@@ -1527,8 +1527,9 @@ static func _empty_storage() -> Dictionary:
 
 
 ## Put everything the ship carries into station storage (cargo, materials, spices, spare gear, probes,
-## portable wormholes). Returns how many things moved.
-func store_all() -> int:
+## portable wormholes). Returns how many things moved. `probes_too` false (the automatic store when docking)
+## leaves your probes on the ship: you want them with you.
+func store_all(probes_too := true) -> int:
 	var n := 0
 	for pair in [[materials, storage.materials], [spices, storage.spices], [weapon_stock, storage.weapons],
 			[module_stock, storage.modules], [cargo, storage.cargo]]:
@@ -1539,10 +1540,12 @@ func store_all() -> int:
 				dst[k] = dst.get(k, 0) + src[k]
 				n += src[k]
 		src.clear()
-	n += probes + portals
-	storage.probes += probes
+	if probes_too:
+		n += probes
+		storage.probes += probes
+		probes = 0
+	n += portals
 	storage.portals += portals
-	probes = 0
 	portals = 0
 	changed.emit()
 	return n

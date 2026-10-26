@@ -199,6 +199,15 @@ func _run() -> void:
 	put(main, JSON.stringify(pw))
 	check(G.load_game() and G.portals == 3 and G.storage.portals == 2, "...but a v12 save keeps any it picks up later")
 
+	print("-- docking stores everything except probes")
+	G.new_game()
+	G.probes = 12
+	G.portals = 1
+	G.materials["corrite"] = 40
+	check(G.store_all(false) == 41 and G.probes == 12 and G.storage.probes == 0, "automatic store: probes stay on the ship (12), the rest goes (41)")
+	check(G.storage.materials.get("corrite", 0) == 40 and G.materials.is_empty(), "...the materials are stored")
+	check(G.store_all() == 12 and G.probes == 0 and G.storage.probes == 12, "the Store everything button still stores probes too")
+
 	print("-- relics come back a week after they're decoded")
 	var rl := [0, 0]
 	for s in G.systems:
