@@ -2320,6 +2320,14 @@ func _update_dock(lm: Dictionary, delta: float) -> void:
 			if player.forward().dot(into) > 0.996 and player.vel.length() < top * 0.6:
 				autopilot.stage = "in"
 		"in":
+			if mode != "fly" and along < _lane_dist(lm) * 0.75:
+				# a menu is open: the bay or the gate's mouth only takes you in flight mode (it would sail straight
+				# through), so wait short of it, nose on it, and carry on in once the menu closes
+				player.cruise_v = 0.0
+				player.throttle = 0.0
+				player.vel = player.vel.move_toward(Vector3.ZERO, top * 1.5 * delta)
+				_steer_to(into, delta)
+				return
 			# straight down the axis: aim at a point on it a little ahead, so any sideways error closes smoothly
 			var station: bool = lm.kind == "station"
 			var goal := _dock_goal(lm)

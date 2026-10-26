@@ -18,6 +18,8 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--gatetest" in OS.get_cmdline_user_args():
+		_gatetest()
 	elif "--phototest" in OS.get_cmdline_user_args():
 		_phototest()
 	elif "--beamtest" in OS.get_cmdline_user_args():
@@ -214,6 +216,72 @@ func _jumptest() -> void:
 	print("JUMPTEST camera turned %.2f deg and the aim %.2f deg across the arrival  %s" % [cam_turn, aim_turn,
 		"PASS" if cam_turn < 1.0 and aim_turn < 1.0 else "FAIL"])
 	print("JUMPTEST map gone afterwards: %s" % (not main.jump_map.visible))
+	get_tree().quit()
+
+
+## `-- --autoshot --gatetest [--menu=inventory|map|fitting|none] [--at=<seconds>]`: auto-travel is flying to a
+## stargate and a menu is opened part-way: the autopilot has to carry on to the gate (it used to go straight on).
+func _gatetest() -> void:
+	var which := "inventory"
+	var open_at := 3.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--menu="):
+			which = a.substr(7)
+		if a.begins_with("--at="):
+			open_at = float(a.substr(5))
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	await _secs(1.0)
+	var sys: Dictionary = Game.systems[0]
+	var gi := -1
+	for i in sys.locs.size():
+		if sys.locs[i].kind == "gate":
+			gi = i
+			break
+	Game.route_target = sys.locs[gi].gate_to
+	main.enter_location(0, gi)
+	await _secs(1.0)
+	var gate: Dictionary = {}
+	for lm in main.landmarks:
+		if lm.kind == "gate":
+			gate = lm
+	var p = main.player
+	Engine.time_scale = 4.0
+	main._start_auto()
+	var t0 := Time.get_ticks_msec()
+	var opened := false
+	var closed := false
+	var log := []
+	var start_d := 0.0
+	while Time.get_ticks_msec() - t0 < 40000:
+		await get_tree().process_frame
+		var t := (Time.get_ticks_msec() - t0) / 1000.0
+		if not opened and t >= open_at and not main.autopilot.is_empty():
+			opened = true
+			start_d = p.position.distance_to(gate.pos)
+			if which != "none":
+				main.open_menu({"inventory": "inventory", "map": "galaxy", "fitting": "fitting"}[which])
+			print("GATETEST at %.1fs: %s opened (mode %s), autopilot %s, %.0f m from the gate" % [t, which, main.mode,
+				main.autopilot.get("mode", "-"), start_d])
+		if opened and not closed and t >= open_at + 8.0:
+			closed = true
+			print("GATETEST at %.1fs: menu closed, %.0f m from the gate" % [t, p.position.distance_to(gate.pos)])
+			main.close_inventory()
+			main.close_fitting()
+			main.close_maps()
+		if opened and fmod(t, 2.0) < 0.05 and (log.is_empty() or log[-1] != int(t)):
+			log.append(int(t))
+			var to: Vector3 = (gate.pos - p.position).normalized()
+			print("GATETEST   t=%2.0f mode %-9s autopilot %-6s %.0f m from the gate, nose %.0f deg off the gate, speed %.0f" % [t, main.mode,
+				main.autopilot.get("mode", "-"), p.position.distance_to(gate.pos), rad_to_deg(p.forward().angle_to(to)), p.vel.length()])
+		if main.travel.get("kind", "") in ["jump", "jumpdrive"] or Game.current_system != 0:
+			break
+	var went: bool = Game.current_system != 0 or main.travel.get("kind", "") != ""
+	print("GATETEST RESULT (%s): %s" % [which, "went through the gate" if went else "did NOT reach the gate"])
+	Engine.time_scale = 1.0
 	get_tree().quit()
 
 
