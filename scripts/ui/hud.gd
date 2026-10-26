@@ -227,7 +227,7 @@ func _draw_crosshair(_vs: Vector2) -> void:
 		_ci.draw_line(c + d * 8.0, c + d * 15.0, Color(col, 0.6), 1.5)
 	var cam: Camera3D = main.camera
 	var p = main.player
-	if p.beam_lock != null and main.target_valid(p.beam_lock) and not cam.is_position_behind(p.beam_lock.global_position):
+	if p.has_beams() and p.beam_lock != null and main.target_valid(p.beam_lock) and not cam.is_position_behind(p.beam_lock.global_position):
 		# the mining beams' lock: a turning diamond on what they're cutting
 		var lp := cam.unproject_position(p.beam_lock.global_position)
 		var r := 14.0

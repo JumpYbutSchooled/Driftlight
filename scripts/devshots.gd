@@ -18,6 +18,8 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--beamtest" in OS.get_cmdline_user_args():
+		_beamtest()
 	elif "--aptest" in OS.get_cmdline_user_args():
 		_aptest()
 	elif "--jumptest" in OS.get_cmdline_user_args():
@@ -210,6 +212,44 @@ func _jumptest() -> void:
 	print("JUMPTEST camera turned %.2f deg and the aim %.2f deg across the arrival  %s" % [cam_turn, aim_turn,
 		"PASS" if cam_turn < 1.0 and aim_turn < 1.0 else "FAIL"])
 	print("JUMPTEST map gone afterwards: %s" % (not main.jump_map.visible))
+	get_tree().quit()
+
+
+## `-- --autoshot --beamtest`: clicking on a rock locks the mining beams on it only when a Mining Laser is mounted.
+func _beamtest() -> void:
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	var at := _find(func(s, l): return s.cat == Game.CAT_PURPLE and l.kind == "anomaly" and l.wormhole < 0)
+	main.enter_location(at[0], at[1])
+	main._pirate_timer = -1.0
+	await _secs(1.5)
+	var p = main.player
+	var rock = null
+	var best := INF
+	for a in get_tree().get_nodes_in_group("asteroids"):
+		if a.position.distance_to(p.position) < best:
+			best = a.position.distance_to(p.position)
+			rock = a
+	main.aim_target = rock
+	var ok := true
+	for mount in [["twin_blasters", false], ["mining_lasers", true]]:
+		Game.weapon_stock[mount[0]] = 4
+		Game.mount_all(mount[0])
+		p.setup()
+		await _secs(0.5)
+		p.beam_lock = null
+		await _click()
+		await _secs(0.2)
+		var got: bool = p.beam_lock != null
+		var label: bool = p.has_beams()
+		var pass_it: bool = got == mount[1] and label == mount[1]
+		ok = ok and pass_it
+		print("BEAMTEST %-14s lock %s, beam label allowed %s  %s" % [mount[0], got, label, "PASS" if pass_it else "FAIL"])
+		await _click()
+	print("BEAMTEST RESULT: %s" % ("passed" if ok else "FAILED"))
 	get_tree().quit()
 
 

@@ -622,11 +622,20 @@ func _beam_point(i: int):
 	return c + (from - c).normalized() * beam_lock.radius * 0.9
 
 
+## Is a beam weapon (a Mining Laser) mounted in any slot? (_beams has an entry per slot, empty for ordinary guns.)
+func has_beams() -> bool:
+	for b in _beams:
+		if b != null:
+			return true
+	return false
+
+
 ## Mining beams: a click locks them on to the rock (or ship, or container) under the crosshair and they keep
 ## cutting it on their own - the turrets track it whatever the crosshair does - until it's used up or you click
 ## again to stop. A better mark sends more of the ore it cuts straight into the hold.
 func _update_beams(delta: float) -> void:
-	if _beams.is_empty():
+	if not has_beams():
+		beam_lock = null  # (no mining beams mounted: nothing to lock on with)
 		return
 	if not alive or main.mode != "fly":
 		beam_lock = null
