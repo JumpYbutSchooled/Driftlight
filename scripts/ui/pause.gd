@@ -1,5 +1,5 @@
 extends CenterContainer
-## ESC menu: pauses the game. Resume, save, volume settings, quit to title or desktop.
+## ESC menu: pauses the game. Resume, save, volume and control settings, quit to title or desktop.
 
 const UI = preload("res://scripts/ui/ui.gd")
 
@@ -43,6 +43,13 @@ func _ready() -> void:
 		s.value_changed.connect(_volume.bind(bus))
 		row.add_child(s)
 		v.add_child(row)
+	v.add_child(UI.heading("CONTROLS", 12, UI.MUTED))
+	var swap := CheckButton.new()
+	swap.text = "Swap W and S  (W dips the nose, S lifts it)"
+	swap.focus_mode = FOCUS_NONE
+	swap.button_pressed = Game.swap_ws
+	swap.toggled.connect(Game.set_swap_ws)
+	v.add_child(swap)
 	v.add_child(HSeparator.new())
 	for b in [["Save & Quit to Title", _to_title, "gate"], ["Quit to Desktop", _quit, "skull"]]:
 		var btn := UI.btn(b[0], b[1], b[2], UI.BAD if b[0].begins_with("Quit") else UI.TEXT)

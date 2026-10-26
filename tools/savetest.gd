@@ -64,7 +64,12 @@ func names(why: String) -> Array:
 
 
 func _run() -> void:
-	var good := FileAccess.get_file_as_string(real)
+	# --save is a real save from an earlier version: as-is it's one this version resets, and marked with the
+	# current save version it stands in for a good, current save
+	var before_reset := FileAccess.get_file_as_string(real)
+	var cur: Dictionary = JSON.parse_string(before_reset)
+	cur.version = G.SAVE_VERSION
+	var good := JSON.stringify(cur)
 	var old_v3 := JSON.stringify({"version": 1, "credits": 0, "owned_ships": ["wren"], "ship_id": "wren", "playtime": 4.0})
 	var main: String = G.save_path
 
@@ -74,7 +79,7 @@ func _run() -> void:
 	put(main + ".bak", good)
 	G.migrate_saves()
 	check(text(main) == good and text(main + ".bak") == good, "migrate leaves a good save alone")
-	check(not G.reset_note, "no 'v4 started over' note")
+	check(not G.reset_note, "no 'started over' note")
 	check(G.has_save(), "Continue shows")
 	check(G.load_game() and G.credits == 57730 and G.ship_id == "excavator", "loads: %d credits, %s" % [G.credits, G.ship_id])
 	check(names("session").size() == 1, "a session backup was kept")
@@ -101,7 +106,7 @@ func _run() -> void:
 	G.migrate_saves()
 	check(not FileAccess.file_exists(main) and not FileAccess.file_exists(main + ".bak"), "the v3 files were moved out of the way")
 	check(names("set_aside").size() == 2, "...into the backups folder, not deleted")
-	check(not G.reset_note, "no 'v4 started over' note (there's a good backup)")
+	check(not G.reset_note, "no 'started over' note (there's a good backup)")
 	check(G.has_save(), "Continue still shows")
 	check(G.load_game() and G.credits == 57730, "Continue restores the newest good backup: %d credits" % G.credits)
 	check(G.loaded_backup.contains("_auto"), "from " + G.loaded_backup.get_file())
@@ -133,9 +138,37 @@ func _run() -> void:
 	wipe()
 	put(main, old_v3)
 	G.migrate_saves()
-	check(G.reset_note, "the 'v4 started over' note shows")
+	check(G.reset_note, "the 'started over' note shows")
 	check(not G.has_save(), "no Continue")
 	check(names("set_aside").size() == 1, "the old save is kept in the backups folder")
+
+	print("-- the reset: a save (and backups) from before this save version")
+	wipe()
+	put(main, before_reset)
+	put(main + ".bak", before_reset)
+	G.load_game()  # (refused: it's from before the reset)
+	G.keep_before_new_game()  # stands in for v7's own backups of it
+	G.migrate_saves()
+	check(G.reset_note, "the 'started over' note shows")
+	check(not G.has_save() and not G.load_game(), "no Continue, and its backups aren't loaded either")
+	check(names("set_aside").size() == 2, "the save and .bak are kept in the backups folder")
+
+	print("-- furnaces keep smelting while the game is closed")
+	wipe()
+	var fur: Dictionary = cur.duplicate(true)
+	fur.refineries = {"0:0": {"name": "Test Station", "queue": [["corrite", 0, 100], ["ferrox", 3, 1000]], "progress": 0.0,
+		"output": {}}}
+	fur.saved_at = Time.get_unix_time_from_system() - 3600.0
+	put(main, JSON.stringify(fur))
+	check(G.load_game(), "loads")
+	var r: Dictionary = G.refineries["0:0"]
+	var ferrox_each: float = G.refine_time("ferrox", 3)
+	var want_ferrox := floori((3600.0 - 100 * G.refine_time("corrite", 0)) / ferrox_each)
+	check(r.output.get("corrite", 0) == 100 * G.Q_YIELD[0], "an hour away: all 100 corrite smelted (%d materials)" % r.output.get("corrite", 0))
+	check(absi(r.output.get("ferrox", 0) - want_ferrox * G.Q_YIELD[3]) <= G.Q_YIELD[3],
+		"...and about %d pristine ferrox (%d materials)" % [want_ferrox, r.output.get("ferrox", 0)])
+	check(G.away_smelted == G.furnace_output() and absf(G.away_time - 3600.0) < 5.0,
+		"reported: %d materials in %d s away" % [G.away_smelted, G.away_time])
 
 	print("-- a fresh install")
 	wipe()

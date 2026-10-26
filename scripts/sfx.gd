@@ -1,6 +1,6 @@
 extends Node
 ## Synthesized sound effects, an engine rumble and the music, all generated in code.
-## Also owns the player settings (volumes), saved to user://settings.cfg.
+## Also owns the player settings (volumes, and the W/S swap kept in Game), saved to user://settings.cfg.
 ##
 ## Sounds are round and low: sine tones with a touch of their octave for body, and low rumbles, never
 ## buzzy saw or square waves.
@@ -178,6 +178,7 @@ func save_settings() -> void:
 	var cfg := ConfigFile.new()
 	for k in volumes:
 		cfg.set_value("audio", k, volumes[k])
+	cfg.set_value("controls", "swap_ws", Game.swap_ws)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -186,6 +187,7 @@ func _load_settings() -> void:
 	if cfg.load(SETTINGS_PATH) == OK:
 		for k in volumes:
 			volumes[k] = cfg.get_value("audio", k, volumes[k])
+		Game.set_swap_ws(bool(cfg.get_value("controls", "swap_ws", true)))
 	for k in volumes:
 		set_volume(k, volumes[k])
 

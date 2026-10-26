@@ -6,7 +6,7 @@ const UI = preload("res://scripts/ui/ui.gd")
 const LOGO = preload("res://icon.svg")
 const CONTROLS := """[font_size=20][color=#ffe7a3][b]CONTROLS[/b][/color][/font_size]
 
-[color=#9fd3ff]Flying[/color]   Your ship is heavy: it takes a few seconds to build up speed and to slow down again, and turns carry momentum.  W / S pitch the nose up and down, Q / E turn, A / D roll.  R / F raise and lower the throttle.  Hold X to brake.  SHIFT boosts while you have energy.  The mouse swings the camera freely round your ship without steering it; middle-click puts it back behind you.
+[color=#9fd3ff]Flying[/color]   Your ship is heavy: it takes a few seconds to build up speed and to slow down again, and turns carry momentum.  W / S pitch the nose (W dips it and S lifts it - swap them in the ESC menu), Q / E turn, A / D roll.  R / F raise and lower the throttle.  Hold X to brake.  SHIFT boosts while you have energy.  The mouse swings the camera freely round your ship without steering it; middle-click puts it back behind you.
 [color=#9fd3ff]Shooting and mining[/color]   Your guns are turrets that swivel toward whatever the crosshair is on; click to fire. Each turret can only fire with a clear shot: the pips under the crosshair show which are ready. Mining Lasers fire a steady beam: click a rock and they lock on and keep cutting ore straight into your hold on their own; click again to stop. Your tractor beam pulls in loose ore near the ship (Tractor Beam modules reach much further).
 [color=#9fd3ff]Getting around[/color]   The OVERVIEW (top right) lists everything nearby: press C to free the cursor and click a row, or right-click whatever's under the crosshair. Then 1 approaches it, 2 orbits it, 3 warps to it, 5 cruises there and G uses it. While the autopilot flies, R / F set how hard it pushes. Hold SPACE for the quick warp menu. M opens the galaxy map: click a system to plot a route there, shift-click to add stops, then press T and the autopilot flies the whole route - warps, stargates and all. N opens the system map, where probes scan planets and hunt anomalies.
 [color=#9fd3ff]Docking[/color]   Fly into a station's docking bay and onto the pad (or press G near it and the autopilot lines up and takes you in). Docked, the maps and your inventory open over the station, and station storage keeps your things safe. Undocking fires you out of the bay. Stargates are railguns: fly into the mouth and the gate fires you to the next system.
@@ -138,7 +138,7 @@ func _draw() -> void:
 		draw_string(UI.body, Vector2(0, y + 92), "SANDBOX   -   everything free, jump anywhere, god mode, spawn tools (F8)", HORIZONTAL_ALIGNMENT_CENTER,
 			vs.x, 18, UI.GOLD)
 	elif Game.reset_note:
-		draw_string(UI.body, Vector2(0, y + 92), "Version 4 started everyone over - your old save was kept in the backups folder.",
+		draw_string(UI.body, Vector2(0, y + 92), "Version 8 started everyone over - your old save was kept in the backups folder.",
 			HORIZONTAL_ALIGNMENT_CENTER, vs.x, 17, UI.GOLD)
 	var upd: String = main.updater.status
 	draw_string(UI.body, Vector2(30, vs.y - 26), "v%d" % Game.VERSION + ("   -   " + upd if upd != "" else ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 14,

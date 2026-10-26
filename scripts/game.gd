@@ -7,11 +7,11 @@ signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 signal jettisoned(ore: String, q: int, n: int)  # cargo thrown out of the hold (main spawns it as loose chunks)
 
-const VERSION := 7  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 8  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots: your pilot, and a sandbox where everything is free (anyone can open it)
 const SLOTS := {"pilot": "driftlight_save.json", "sandbox": "driftlight_admin.json"}
-const SAVE_VERSION := 2  # saves older than this are set aside (v4 started everyone over)
+const SAVE_VERSION := 3  # saves older than this are set aside (v4 and v8 started everyone over)
 const BACKUPS_KEPT := 40  # rolling copies of each save kept in user://backups (old copies of the game never touch it)
 const BACKUP_EVERY := 600.0  # seconds of play between rolling backups
 const GALAXY_SEED := 20261024
@@ -21,11 +21,13 @@ const MIN_SPACING := 62.0  # closest two systems can be on the galaxy map
 const LINK_RANGE := 190.0  # furthest apart two systems can be and still get a stargate
 const MINE_COST := 7.0  # mining power needed to split one ore off a Corrite rock; rarer ores are harder
 const HARDNESS_PER_TIER := 0.2
-const REFINE_TIME := [0.4, 0.6, 1.0, 2.0]  # seconds to smelt one raw ore, by quality (rarer ores +12% per tier)
+const REFINE_TIME := [0.8, 1.2, 2.0, 4.0]  # seconds to smelt one raw ore, by quality (rarer ores +12% per tier)
 const PROBE_COST := {"corrite": 4}
-const BUILD_COST_MULT := 4  # building ships, weapons and modules takes this many times the listed materials
-const PROBE_PRICE := 12  # credits, at a market
-const MARKET_MARKUP := 5.0  # ready-made gear costs this many times its materials' worth
+const BUILD_COST_MULT := 16  # building ships, weapons and modules takes this many times the listed materials (x4 before v8)
+const PRICE_MULT := 50  # v8: everything bought with credits costs 50 times what it did
+const PROBE_PRICE := 12 * PRICE_MULT  # credits, at a market
+const MARKET_MARKUP := 5.0  # ready-made gear costs this many times its materials' worth (then x PRICE_MULT)
+const MARKET_BASIS := 4  # ...worked out from the listed materials x4, as building took before v8, so dearer building doesn't stack on PRICE_MULT
 const MAX_MISSIONS := 4
 const MAX_PINS := 3
 const WORLD_SCALE := 0.12  # 3D metres per old 2D pixel: turns the speeds/ranges in these tables into 3D units
@@ -86,7 +88,7 @@ static func q_tag(q: int, short := false) -> String:
 	if q == Q_NORMAL:
 		return ""
 	return Q_NAMES[q].substr(0, 3) if short else Q_NAMES[q]
-const Q_YIELD := [1, 3, 5, 25]
+const Q_YIELD := [1, 2, 3, 5]  # materials smelted from one piece of ore, by quality (1, 3, 5, 25 before v8)
 const Q_COLORS := [Color("8d8d8d"), Color("f0f0f0"), Color("ffd24a"), Color("74f7ff")]
 # ore quality odds by system category; Pristine ore is only ever found in the anomalies of Wild space
 const Q_WEIGHTS := [[97, 3, 0, 0], [58, 35, 7, 0], [0, 74, 26, 0], [0, 55, 45, 0]]
@@ -564,7 +566,10 @@ var _backup_at := 0.0  # playtime at the last rolling backup
 var sandbox := false  # playing the sandbox slot
 var god := false  # sandbox: can't be hurt
 var peaceful := false  # sandbox: no pirates
-var reset_note := false  # old saves were set aside this run (v4 started everyone over)
+var reset_note := false  # old saves were set aside this run (v8 started everyone over)
+var away_time := 0.0  # how long the game was closed before this save was loaded
+var away_smelted := 0  # materials the furnaces made in that time
+var swap_ws := true  # W dips the nose and S lifts it (a setting in the ESC menu, saved in settings.cfg)
 var _portable_rate := 0.0  # Portable Refinery: ore per minute
 var _portable_t := 0.0
 
@@ -769,8 +774,7 @@ func _ready() -> void:
 	_key("move_down", [KEY_F])
 	_key("yaw_left", [KEY_Q, KEY_LEFT])
 	_key("yaw_right", [KEY_E, KEY_RIGHT])
-	_key("pitch_up", [KEY_W, KEY_UP])
-	_key("pitch_down", [KEY_S, KEY_DOWN])
+	set_swap_ws(swap_ws)
 	_key("roll_left", [KEY_A])
 	_key("roll_right", [KEY_D])
 	_key("warp_menu", [KEY_SPACE])
@@ -807,6 +811,17 @@ func _ready() -> void:
 func _on_changed() -> void:
 	dirty = true
 	_portable_rate = stats_ship().refine
+
+
+## W and S pitch the nose. Swapped (the default), W dips it and S lifts it, like pushing and pulling a flight
+## stick; otherwise W lifts and S dips. The arrow keys stay as they are (Up lifts, Down dips).
+func set_swap_ws(on: bool) -> void:
+	swap_ws = on
+	for a in ["pitch_up", "pitch_down"]:
+		if InputMap.has_action(a):
+			InputMap.erase_action(a)
+	_key("pitch_up", [KEY_S if on else KEY_W, KEY_UP])
+	_key("pitch_down", [KEY_W if on else KEY_S, KEY_DOWN])
 
 
 func _key(action: String, keys: Array) -> void:
@@ -1743,6 +1758,15 @@ func _tick_portable(delta: float) -> void:
 	changed.emit()
 
 
+## Finished materials waiting in furnaces, all stations together.
+func furnace_output() -> int:
+	var n := 0
+	for key in refineries:
+		for id in refineries[key].output:
+			n += refineries[key].output[id]
+	return n
+
+
 func refinery_seconds_left(r: Dictionary) -> float:
 	var t := 0.0
 	for item in r.queue:
@@ -1780,7 +1804,7 @@ func sell_price(ore: String, cat: int) -> int:
 
 
 func buy_price(ore: String) -> int:
-	return ORES[ore].value * 3
+	return ORES[ore].value * 3 * PRICE_MULT
 
 
 func sell(ore: String, n: int, cat: int) -> void:
@@ -1818,7 +1842,7 @@ func buy(id: String, n: int) -> bool:
 
 ## What building something takes. The tables' material amounts are multiplied up by BUILD_COST_MULT:
 ## anything worth having takes a lot of ore (probes stay cheap; spices and parts aren't multiplied).
-func build_cost(kind: String, id: String) -> Dictionary:
+func build_cost(kind: String, id: String, mult := BUILD_COST_MULT) -> Dictionary:
 	var base: Dictionary
 	match kind:
 		"ship": base = SHIPS[id].cost
@@ -1827,7 +1851,7 @@ func build_cost(kind: String, id: String) -> Dictionary:
 		_: return PROBE_COST
 	var out := {}
 	for k in base:
-		out[k] = base[k] * (BUILD_COST_MULT if ORES.has(k) else 1)
+		out[k] = base[k] * (mult if ORES.has(k) else 1)
 	return out
 
 
@@ -1845,17 +1869,18 @@ func build(kind: String, id: String) -> bool:
 ## materials and spices, with a hefty markup. Rich pilots can skip the grind.
 func market_price(kind: String, id: String) -> int:
 	var total := 0
-	var cost := build_cost(kind, id)
+	var cost := build_cost(kind, id, MARKET_BASIS)
+	var markup := MARKET_MARKUP * PRICE_MULT
 	for k in cost:
 		var each := 0
 		if k.begins_with("w:"):
-			each = roundi(market_price("weapon", k.substr(2)) / MARKET_MARKUP)  # the mark below, at its own worth
+			each = roundi(market_price("weapon", k.substr(2)) / markup)  # the mark below, at its own worth
 		elif k.begins_with("m:"):
-			each = roundi(market_price("module", k.substr(2)) / MARKET_MARKUP)
+			each = roundi(market_price("module", k.substr(2)) / markup)
 		else:
 			each = ORES[k].value if ORES.has(k) else [30, 80, 200, 500][SPICES[k].rarity]
 		total += each * cost[k]
-	return maxi(50, roundi(total * MARKET_MARKUP / 10.0) * 10)
+	return maxi(50 * PRICE_MULT, roundi(total * markup / 10.0) * 10)
 
 
 func buy_ready_made(kind: String, id: String) -> bool:
@@ -2684,8 +2709,10 @@ func load_game() -> bool:
 		refineries[key] = {"name": str(r.get("name", "")), "queue": q, "progress": float(r.get("progress", 0.0)),
 			"output": _ints(r.get("output", {}))}
 	# furnaces kept smelting while the game was closed (up to a week)
-	var away := clampf(Time.get_unix_time_from_system() - float(data.get("saved_at", Time.get_unix_time_from_system())), 0.0, 604800.0)
-	tick_refineries(away)
+	away_time = clampf(Time.get_unix_time_from_system() - float(data.get("saved_at", Time.get_unix_time_from_system())), 0.0, 604800.0)
+	var before := furnace_output()
+	tick_refineries(away_time)
+	away_smelted = furnace_output() - before
 	current_system = clampi(int(data.get("system", 0)), 0, systems.size() - 1)
 	current_loc = clampi(int(data.get("loc", 0)), 0, systems[current_system].locs.size() - 1)
 	_backup_at = playtime

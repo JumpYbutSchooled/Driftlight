@@ -22,8 +22,15 @@ moved there, never deleted. If the save is missing or damaged, or an old copy of
 newest good backup loads by itself when you press *Continue*. Keep one copy of the game and let it update
 itself; an old copy can still write over your save, but v7 and later recover it from the backups.
 
-**Version 4 started everyone over.** Saves from earlier versions are set aside, never deleted, and you
-begin again in a Wren.
+**Version 8 started everyone over** (as version 4 did). Saves from earlier versions are set aside in the
+`backups` folder, never deleted, and you begin again in a Wren. v8 also made progress much slower:
+
+- Everything bought with credits (ready-made gear, probes, raw ore) costs **50 times** what it did.
+- Building ships, weapons and modules takes **4 times** the materials.
+- Better ore still smelts into more materials, but far less than before: Inferior 1, Normal 2, Superior 3,
+  Pristine 5 (it was 1, 3, 5 and 25).
+- Furnaces smelt at half the speed they did in v5-v7, and keep smelting while the game is closed (for up to a
+  week). When you come back the game tells you how much was made.
 
 ## How to progress
 
@@ -31,7 +38,8 @@ No spoilers - just the shape of it. (The same guide is in the game: press H.)
 
 1. **Mine and smelt.** Shoot ore veins (V surveys what's in them) and collect the chunks: fly into them, let
    your tractor beam pull them in, or press O. Dock at a station with a refinery, load your hold into the
-   furnace and collect the materials when they're done - furnaces keep working while you're away.
+   furnace and collect the materials when they're done - furnaces keep working while you're away, even
+   with the game closed. Better ore smelts into more materials.
 2. **Build, don't buy.** Everything is built from materials at a station's Fabricator. Markets sell the same
    things ready-made, but for a lot of credits. A Mining Laser is a great first build: its beam locks on and
    cuts ore straight into your hold: click a rock once and it keeps cutting until you click again.
@@ -58,7 +66,7 @@ peaceful space and spawning tools (F8) - for anyone who just wants to fly the bi
 
 | | |
 |---|---|
-| W / S | pitch the nose up / down |
+| W / S | pitch the nose down / up (swap them in the ESC menu) |
 | Q / E | turn |
 | A / D | roll |
 | R / F | throttle up / down (on autopilot: how hard the autopilot pushes) |

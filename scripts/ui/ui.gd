@@ -248,6 +248,24 @@ static func dist(d: float) -> String:
 		return "%.1f km" % (d / 1000.0)
 	return "%d km" % roundi(d / 1000.0)
 
+
+## A countdown: "4:05", or "2:13:40" once it's an hour or more.
+static func clock(t: float) -> String:
+	var secs := ceili(t)
+	if secs >= 3600:
+		return "%d:%02d:%02d" % [floori(secs / 3600.0), floori(secs / 60.0) % 60, secs % 60]
+	return "%d:%02d" % [floori(secs / 60.0), secs % 60]
+
+
+## A length of time in words: "40 min", "2 h 13 min", "3 days".
+static func span(t: float) -> String:
+	var mins := roundi(t / 60.0)
+	if mins < 60:
+		return "%d min" % maxi(mins, 1)
+	if mins < 48 * 60:
+		return "%d h %d min" % [floori(mins / 60.0), mins % 60]
+	return "%d days" % floori(mins / 1440.0)
+
 ## How visible a UI part is `t` seconds into the HUD coming back on: each part (its own `part_seed`) waits a
 ## moment, stutters on and off like a screen powering up, then holds.
 static func flicker(t: float, part_seed: int) -> float:
@@ -282,7 +300,7 @@ static func module_card(id: String, title_text := "") -> Dictionary:
 ## The progression guide (title screen and the inventory's Guide tab): how to get on, without spoiling anything.
 const GUIDE := """[font_size=20][color=#ffe7a3][b]HOW TO PROGRESS[/b][/color][/font_size]
 
-[color=#9fd3ff]1. Mine and smelt.[/color]  Shoot ore veins (V surveys what's in them) and collect the chunks: fly into them, let your tractor beam pull them in, or press O. Dock at a station with a refinery, load your hold into the furnace and collect the materials when they're done - furnaces keep working while you're away.
+[color=#9fd3ff]1. Mine and smelt.[/color]  Shoot ore veins (V surveys what's in them) and collect the chunks: fly into them, let your tractor beam pull them in, or press O. Dock at a station with a refinery, load your hold into the furnace and collect the materials when they're done - furnaces keep working while you're away, even with the game closed. Better ore smelts into more materials.
 [color=#9fd3ff]2. Build, don't buy.[/color]  Everything is built from materials at a station's Fabricator. Markets sell the same things ready-made, but for a lot of credits. A Mining Laser is a great first build: click a rock and its beam locks on and cuts ore straight into your hold on its own (click again to stop).
 [color=#9fd3ff]3. Climb the ship ladder.[/color]  There are over fifty ships in ten tiers. Each tier costs more than the last and does something better - more cargo, more guns, more speed, better mining. Pick the ones that suit how you like to play; you don't need them all.
 [color=#9fd3ff]4. Mark up your gear.[/color]  Every weapon comes in five marks and every module in three. Each mark is built from the one below it, plus more materials.

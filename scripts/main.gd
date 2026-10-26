@@ -413,6 +413,9 @@ func continue_game() -> void:
 		return
 	_begin(Game.current_system, Game.current_loc)
 	Game.say("Welcome back, pilot.", Color("9fd3ff"))
+	if Game.away_smelted > 0:
+		Game.say("While you were away (%s) your furnaces smelted %d materials. Dock there to collect them." % [
+			UI.span(Game.away_time), Game.away_smelted], Color("e8a060"))
 	if Game.loaded_backup != "":
 		Game.say("Your save was missing or damaged, so it was restored from the backup %s." % Game.loaded_backup.get_file(),
 			Color("ffd24a"))

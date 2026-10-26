@@ -341,8 +341,7 @@ func _update_furnace() -> void:
 
 
 func _clock(t: float) -> String:
-	var secs := ceili(t)
-	return "%d:%02d" % [floori(secs / 60.0), secs % 60]
+	return UI.clock(t)
 
 
 func _load(cargo_key: String, from_storage := false) -> void:

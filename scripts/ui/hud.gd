@@ -556,8 +556,7 @@ func _draw_side_panels(vs: Vector2, top: float) -> void:
 
 
 func _clock(t: float) -> String:
-	var secs := ceili(t)
-	return "%d:%02d" % [floori(secs / 60.0), secs % 60]
+	return UI.clock(t)
 
 
 # ---------------------------------------------------------------- radar
