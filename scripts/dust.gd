@@ -6,7 +6,7 @@ extends MultiMeshInstance3D
 ## box, so space never looks perfectly clean.
 
 const TRAIL_SHADER = preload("res://shaders/dust_trail.gdshader")
-const COUNT := 800
+const COUNT := 300  # motes round the camera with it close behind the ship (fewer when it's pulled back)
 const BOX := 160.0
 const PUFFS := 40
 const PUFF_BOX := 1400.0
@@ -18,6 +18,7 @@ var cam: Camera3D
 var offset := Vector3.ZERO  # extra scroll (warp): the dust rushes past along -dir
 var stretch := 0.0  # 0..1 warp streaking
 var dir := Vector3.FORWARD
+var zoom := 1.0  # the camera's zoom (main sets it): pulled back, the motes thin out or they'd fill the view
 var _base := []
 var _puff_base := []
 var _puffs: MultiMeshInstance3D
@@ -114,7 +115,9 @@ func _process(delta: float) -> void:
 	if delta > 0.0 and _hist.size() >= 2:
 		_vel = _vel.lerp((cp - _hist[-2][1]) / maxf(now - _hist[-2][0], 0.001), 0.25)
 	_update_trail(now, cp)
-	for i in COUNT:
+	var n := clampi(roundi(COUNT / sqrt(maxf(zoom, 1.0))), 8, COUNT)
+	multimesh.visible_instance_count = n
+	for i in n:
 		var b: Vector3 = _base[i]
 		var p := Vector3(fposmod(b.x - cp.x, BOX), fposmod(b.y - cp.y, BOX), fposmod(b.z - cp.z, BOX)) - Vector3.ONE * BOX * 0.5
 		multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY, cam.global_position + p))

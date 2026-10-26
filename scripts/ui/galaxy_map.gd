@@ -15,6 +15,9 @@ var _drag := false
 var _drag_dist := 0.0
 var _counts := [0, 0, 0, 0]
 var _region_at := []  # [label position, region] for each region, computed once
+var _pulse: Control  # the ring round where you are
+var _top: Control  # what's drawn over the ring
+var _sig := []  # what the map showed when it was last drawn
 
 
 func _ready() -> void:
@@ -22,6 +25,16 @@ func _ready() -> void:
 	mouse_filter = MOUSE_FILTER_STOP
 	visible = false
 	font = ThemeDB.fallback_font
+	for k in 2:
+		var c := Control.new()
+		c.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
+		c.mouse_filter = MOUSE_FILTER_IGNORE
+		c.draw.connect(_draw_pulse if k == 0 else _draw_top)
+		add_child(c)
+		if k == 0:
+			_pulse = c
+		else:
+			_top = c
 
 
 func open() -> void:
@@ -41,6 +54,7 @@ func open() -> void:
 	center = Game.systems[Game.current_system].pos
 	zoom = 0.6
 	hovered = -1
+	_sig = []
 	show()
 	UI.pop_in(self)
 
@@ -136,14 +150,23 @@ func _add_stop(id: int) -> void:
 	Game.say("Stop added: %s. The route is %d jumps in all." % [Game.systems[id].name, Game.route_jumps()], Color("ffe066"))
 
 
+## A thousand systems and their lanes take a while to draw, so the map is only drawn again when something on it
+## changes (panning, zooming, hovering, the route...); the pulsing ring has a layer of its own.
 func _process(_delta: float) -> void:
-	if visible:
+	if not visible:
+		return
+	_pulse.queue_redraw()
+	var sig := [zoom, center, size, hovered, Game.current_system, Game.route_target, Game.route_stops.duplicate(), Game.portals,
+		Game.sandbox, Game.regions_seen.size(), main.player.st.get("jump", 0.0), main.can_jump_drive(hovered) if hovered >= 0 else false]
+	if sig != _sig:
+		_sig = sig
 		queue_redraw()
+		_top.queue_redraw()
 
 
+## Under the ring: the regions, the lanes, the route, the systems and the region names.
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.015, 0.035, 0.97))
-	var t := Time.get_ticks_msec() / 1000.0
 	var view := Rect2(Vector2.ZERO, size).grow(800.0)
 	# each region's systems softly tinted in its colour, under everything else
 	var sz := roundf(clampf(4.0 * zoom + 3.0, 4.0, 14.0))
@@ -201,8 +224,19 @@ func _draw() -> void:
 	if reach > 0.0:
 		draw_arc(cp, reach * zoom, 0.0, TAU, 96, Color(0.75, 0.5, 1.0, 0.55), 1.5, true)
 		draw_string(font, cp + Vector2(-120, -reach * zoom - 8), "JUMP DRIVE REACH", HORIZONTAL_ALIGNMENT_CENTER, 240, 13, Color("c080ff"))
-	draw_arc(cp, 12.0 + sin(t * 4.0) * 3.0, 0.0, TAU, 24, Color.WHITE, 2.0)
-	draw_string(font, cp + Vector2(-40, -20), "YOU", HORIZONTAL_ALIGNMENT_CENTER, 80, 14, Color.WHITE)
+
+
+## The ring round where you are, pulsing (redrawn every frame: it's all that moves).
+func _draw_pulse() -> void:
+	var t := Time.get_ticks_msec() / 1000.0
+	_pulse.draw_arc(_to_screen(Game.systems[Game.current_system].pos), 12.0 + sin(t * 4.0) * 3.0, 0.0, TAU, 24, Color.WHITE, 2.0)
+
+
+## Over the ring: its label, the hovered system's card, the title and the key.
+func _draw_top() -> void:
+	var c := _top
+	var cp := _to_screen(Game.systems[Game.current_system].pos)
+	c.draw_string(font, cp + Vector2(-40, -20), "YOU", HORIZONTAL_ALIGNMENT_CENTER, 80, 14, Color.WHITE)
 
 	if hovered >= 0:
 		var h: Dictionary = Game.systems[hovered]
@@ -223,23 +257,23 @@ func _draw() -> void:
 		elif h.cat == Game.CAT_RED:
 			lines.append("No stations. Pirates about.")
 		var box := Rect2(hp, Vector2(400, 16 + lines.size() * 22))
-		draw_rect(box, Color(0.03, 0.04, 0.08, 0.95))
-		draw_rect(box, Game.CAT_COLORS[h.cat], false, 2.0)
+		c.draw_rect(box, Color(0.03, 0.04, 0.08, 0.95))
+		c.draw_rect(box, Game.CAT_COLORS[h.cat], false, 2.0)
 		for i in lines.size():
 			var col: Color = Game.CAT_COLORS[h.cat] if i < 2 else Color("c9d3e6")
-			draw_string(font, hp + Vector2(10, 26 + i * 22), lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 16 if i == 0 else 14, col)
+			c.draw_string(font, hp + Vector2(10, 26 + i * 22), lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 16 if i == 0 else 14, col)
 
-	draw_string(UI.title, Vector2(24, 50), "GALAXY MAP  %d SYSTEMS" % Game.systems.size(), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UI.HEAD)
-	draw_string(font, Vector2(24, 80), "Wheel: zoom    Drag: pan    Click: plot a route    Shift-click: add a stop    Right click: clear    T: auto-travel    M / Esc: close",
+	c.draw_string(UI.title, Vector2(24, 50), "GALAXY MAP  %d SYSTEMS" % Game.systems.size(), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UI.HEAD)
+	c.draw_string(font, Vector2(24, 80), "Wheel: zoom    Drag: pan    Click: plot a route    Shift-click: add a stop    Right click: clear    T: auto-travel    M / Esc: close",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("8090a8"))
 	if Game.sandbox:
-		draw_string(font, Vector2(24, 106), "SANDBOX: double-click a system to jump straight there", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, UI.GOLD)
+		c.draw_string(font, Vector2(24, 106), "SANDBOX: double-click a system to jump straight there", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, UI.GOLD)
 	if Game.route_target >= 0:
-		draw_string(font, Vector2(24, 132), "Route: %d jumps%s" % [Game.route_jumps(), "" if Game.route_stops.is_empty() else
+		c.draw_string(font, Vector2(24, 132), "Route: %d jumps%s" % [Game.route_jumps(), "" if Game.route_stops.is_empty() else
 			" over %d stops" % (Game.route_stops.size() + 1)], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("ffe066"))
 	for i in 4:
 		var ly := size.y - 130.0 + i * 26.0
-		draw_rect(Rect2(24, ly - 12, 14, 14), Game.CAT_COLORS[i])
+		c.draw_rect(Rect2(24, ly - 12, 14, 14), Game.CAT_COLORS[i])
 		var desc: String = ["Core - safe, the common ores", "Secure - two regions, a few pirates", "Unsecure - three regions, no stations",
 			"Wild - four regions, anomalies, very dangerous"][i]
-		draw_string(font, Vector2(48, ly), "%s   (%d)" % [desc, _counts[i]], HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Game.CAT_COLORS[i])
+		c.draw_string(font, Vector2(48, ly), "%s   (%d)" % [desc, _counts[i]], HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Game.CAT_COLORS[i])

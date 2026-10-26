@@ -10,6 +10,9 @@ const RADAR_RANGE := 3000.0  # metres
 const RADAR_R := 115.0
 const SWEEP_SPEED := 1.6  # radians per second
 const MARK := Color(0.95, 0.86, 0.6)  # landmarks (stations, gates, fields...)
+# what else shows on the radar, and its colour (rocks take their ore's)
+const RADAR_GROUPS := {"npcs": Color("9fc8e8"), "asteroids": Color.WHITE, "chunks": Color("eee0a0"), "crates": Color("c4a060"),
+	"pirates": Color("ee5a4a")}
 # part: flicker seed (each comes on differently)
 const PARTS := {"markers": 1, "crosshair": 2, "status": 3, "side": 4, "radar": 5, "route": 6, "msgs": 7, "toast": 0,
 	"title": 9, "warp": 0, "prompt": 10, "keys": 11, "hover": 12}
@@ -261,7 +264,9 @@ func _draw_markers(vs: Vector2) -> void:
 	_draw_bay(cam, pp)
 	_draw_self(vs, cam)
 	_draw_chunk_tags(cam, pp)
-	for pir in get_tree().get_nodes_in_group("pirates"):
+	for pir in main.group("pirates"):
+		if not is_instance_valid(pir):
+			continue
 		var d: float = pp.distance_to(pir.position)
 		if d > 500.0 + main.player.radius * 2.0 or cam.is_position_behind(pir.position):
 			continue
@@ -388,7 +393,9 @@ func _draw_self(_vs: Vector2, cam: Camera3D) -> void:
 ## Small rings on loose ore chunks near you, so they're easy to find against a huge rock.
 func _draw_chunk_tags(cam: Camera3D, pp: Vector3) -> void:
 	var reach: float = 900.0 + main.player.radius * 3.0
-	for n in get_tree().get_nodes_in_group("chunks"):
+	for n in main.group("chunks"):
+		if not is_instance_valid(n):
+			continue
 		var d: float = pp.distance_to(n.position)
 		if d > reach or cam.is_position_behind(n.position):
 			continue
@@ -576,15 +583,28 @@ func _update_radar(delta: float) -> void:
 	var pp: Vector3 = p.position
 	var k: float = RADAR_R / (RADAR_RANGE + p.radius * 4.0)
 	var seen := {}
-	var contacts := []
 	for i in main.landmarks.size():
-		contacts.append(["lm%d" % i, main.landmarks[i].pos, MARK, 5.0, main.landmarks[i].icon])
-	for group in ["npcs", "asteroids", "chunks", "crates", "pirates"]:
+		var lm: Dictionary = main.landmarks[i]
+		var key := "lm%d" % i
+		seen[key] = true
+		var l: Vector3 = inv * (lm.pos - pp)
+		var off := Vector2(l.x, l.z) * k
+		var behind := fposmod(_sweep - off.angle(), TAU)  # how far the line has gone past this contact
+		if not _marks.has(key) or behind <= swept:
+			_marks[key] = {"off": off, "color": MARK, "size": 5.0, "kind": lm.icon, "age": behind / SWEEP_SPEED}
+	# (everything else, hundreds of rocks and chunks, is only worked out in full when the line paints it)
+	for group in RADAR_GROUPS:
 		for n in main.group(group):
 			if not n.visible:
 				continue
-			var col: Color = {"npcs": Color("9fc8e8"), "chunks": Color("eee0a0"), "crates": Color("c4a060"),
-				"pirates": Color("ee5a4a")}.get(group, Color.WHITE)
+			var id: int = n.get_instance_id()
+			seen[id] = true
+			var l: Vector3 = inv * (n.position - pp)
+			var off := Vector2(l.x, l.z) * k
+			var behind := fposmod(_sweep - off.angle(), TAU)
+			if _marks.has(id) and behind > swept:
+				continue
+			var col: Color = RADAR_GROUPS[group]
 			var s := 3.0
 			match group:
 				"asteroids":
@@ -594,14 +614,7 @@ func _update_radar(delta: float) -> void:
 					s = 1.6
 				"pirates":
 					s = 5.0 if n.data.has("boss") else 3.5
-			contacts.append([n.get_instance_id(), n.position, col, s, "pirate" if group == "pirates" else ""])
-	for c in contacts:
-		var l: Vector3 = inv * (c[1] - pp)
-		var off := Vector2(l.x, l.z) * k
-		seen[c[0]] = true
-		var behind := fposmod(_sweep - off.angle(), TAU)  # how far the line has gone past this contact
-		if not _marks.has(c[0]) or behind <= swept:
-			_marks[c[0]] = {"off": off, "color": c[2], "size": c[3], "kind": c[4], "age": behind / SWEEP_SPEED}
+			_marks[id] = {"off": off, "color": col, "size": s, "kind": "pirate" if group == "pirates" else "", "age": behind / SWEEP_SPEED}
 	for key in _marks.keys():
 		if not seen.has(key):
 			_marks.erase(key)

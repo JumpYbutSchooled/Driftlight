@@ -26,6 +26,9 @@ var _refresh := 0.0
 var _hover := -1
 var _scroll := 0
 var _chips := []  # [Rect2, kind, value] for the filter / sort buttons, as last drawn
+var _sig := []  # what it showed when last drawn
+var _sel = null  # (and what was selected)
+var _rows_ver := 0  # counts list refreshes
 
 
 func _ready() -> void:
@@ -41,6 +44,7 @@ func _process(delta: float) -> void:
 	if _refresh <= 0.0:
 		_refresh = 0.3
 		_rows = main.overview_rows(cat, minq, ore, sort, reverse)
+		_rows_ver += 1
 		var seen := {}
 		var pool: String = cat if cat in ["veins", "loose"] else "ore"
 		for r in main.overview_rows(pool, minq):
@@ -51,7 +55,16 @@ func _process(delta: float) -> void:
 	var vs := get_viewport_rect().size
 	position = Vector2(vs.x - W - 24.0, 18.0)
 	size = Vector2(W, TOP + ROWS * ROW_H + 34.0)
-	queue_redraw()
+	# drawn again only when what it shows changes: the list (every 0.3 s), the hover, the selection, a row going
+	var gone := 0
+	for k in mini(ROWS, _rows.size() - _scroll):
+		if not main.target_valid(_rows[k + _scroll].t):
+			gone |= 1 << k
+	var sig := [_rows_ver, _hover, _scroll, size, gone]
+	if sig != _sig or not is_same(main.selected, _sel):
+		_sig = sig
+		_sel = main.selected
+		queue_redraw()
 
 
 func _row_at(p: Vector2) -> int:

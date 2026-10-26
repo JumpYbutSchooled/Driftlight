@@ -18,6 +18,12 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--bench" in OS.get_cmdline_user_args():
+		_bench()
+	elif "--gpu" in OS.get_cmdline_user_args():
+		_gpu()
+	elif "--compare" in OS.get_cmdline_user_args():
+		_compare()
 	elif "--skies" in OS.get_cmdline_user_args():
 		_skies()
 	else:
@@ -151,6 +157,332 @@ func _gallery() -> void:
 		sheet.save_png(dir.path_join("ship_sheet.png"))
 		print("SHEET ship_sheet")
 	get_tree().quit()
+
+
+## `-- --autoshot --bench`: frame times in a few busy scenes (CPU only when run --headless), plus what
+## turning parts off saves, to see where the time goes.
+func _bench() -> void:
+	print("BENCH startup: %d ms to here, galaxy %d ms" % [Time.get_ticks_msec(), Game.gen_ms])
+	if "--startup" in OS.get_cmdline_user_args():
+		get_tree().quit()
+		return
+	Engine.max_fps = 0
+	OS.low_processor_usage_mode_sleep_usec = 0  # (headless runs sleep 6.9 ms between frames otherwise)
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	await _secs(1.0)
+	var t0 := Time.get_ticks_usec()
+	main.start_new_game()
+	seed(1)
+	print("BENCH new game: %.0f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
+	Game.god = true
+	await _secs(1.5)
+	var p = main.player
+	p.throttle = 0.3
+	var base := await _measure("start (Core, by the station)")
+	if "--ablate" in OS.get_cmdline_user_args():
+		await _ablate(base)
+	# loose ore everywhere
+	for i in 160:
+		main.spawn_chunk("corrite", 1, 1, p.position + Vector3(randf_range(-400, 400), randf_range(-150, 150), randf_range(-400, 400)),
+			Vector3.ZERO)
+	base = await _measure("160 loose chunks")
+	if "--ablate" in OS.get_cmdline_user_args():
+		await _ablate(base)
+	# a fight: pirates round the ship, guns firing
+	main._spawn_pirates()
+	main._spawn_pirates()
+	await _secs(1.0)
+	var pir = get_tree().get_nodes_in_group("pirates")
+	if not pir.is_empty():
+		main.select(pir[0])
+	Input.action_press("fire")
+	base = await _measure("combat: %d pirates, firing" % get_tree().get_nodes_in_group("pirates").size())
+	if "--ablate" in OS.get_cmdline_user_args():
+		await _ablate(base)
+	Input.action_release("fire")
+	for n in get_tree().get_nodes_in_group("pirates"):
+		n.queue_free()
+	for n in get_tree().get_nodes_in_group("chunks"):
+		n.queue_free()
+	# the densest rock field: a Wild anomaly
+	var at := _find(func(s, l): return s.cat == Game.CAT_PURPLE and l.kind == "anomaly" and l.wormhole < 0)
+	t0 = Time.get_ticks_usec()
+	main.enter_location(at[0], at[1])
+	print("BENCH entering the anomaly: %.0f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
+	main._pirate_timer = -1.0
+	await _secs(1.5)
+	base = await _measure("Wild anomaly: %d rocks" % get_tree().get_nodes_in_group("asteroids").size())
+	if "--ablate" in OS.get_cmdline_user_args():
+		await _ablate(base)
+	main.open_menu("galaxy")
+	await _secs(0.5)
+	await _measure("galaxy map")
+	main.close_maps()
+	main.open_menu("system")
+	await _secs(0.5)
+	await _measure("system map")
+	main.close_maps()
+	await _secs(0.5)
+	var far := 0
+	for k in Game.systems[at[0]].locs.size():
+		if k != at[1] and Game.systems[at[0]].locs[k].kind != "anomaly":
+			far = k
+	main.start_warp(far)
+	await _secs(1.0)
+	await _measure("warping")
+	while main.mode != "fly":
+		await get_tree().process_frame
+	get_tree().quit()
+
+
+## `-- --autoshot --gpu` (in a window): GPU time per frame in a few scenes, and what each render feature costs.
+func _gpu() -> void:
+	Engine.max_fps = 0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	var vp := get_viewport()
+	RenderingServer.viewport_set_measure_render_time(vp.get_viewport_rid(), true)
+	print("GPU adapter: %s  (%s)  window %s" % [RenderingServer.get_video_adapter_name(), RenderingServer.get_video_adapter_api_version(),
+		DisplayServer.window_get_size()])
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	await _secs(2.0)
+	main.player.throttle = 0.2
+	await _gpu_scene("start (Core, by the station)")
+	var p = main.player
+	var bay: Dictionary = main.station_lm().bay
+	p.position = bay.mouth + bay.out * 250.0 + Vector3(30, 20, 0)
+	main.aim = Basis.looking_at((bay.pad - p.position).normalized(), Vector3.UP)
+	p.basis = main.aim
+	p.stop()
+	main.snap_camera()
+	await _secs(1.0)
+	await _gpu_scene("docking bay mouth")
+	if "--quick" in OS.get_cmdline_user_args():
+		get_tree().quit()
+		return
+	var at := _find(func(s, l): return s.cat == Game.CAT_PURPLE and l.kind == "anomaly" and l.wormhole < 0)
+	main.enter_location(at[0], at[1])
+	main._pirate_timer = -1.0
+	await _secs(2.0)
+	await _gpu_scene("Wild anomaly")
+	get_tree().quit()
+
+
+func _gpu_scene(what: String) -> void:
+	var env: Environment = main.env
+	var vp := get_viewport()
+	var toggles := {
+		"sky (plain colour instead)": [func(): env.background_mode = Environment.BG_COLOR, func(): env.background_mode = Environment.BG_SKY],
+		"ssao": [func(): env.ssao_enabled = false, func(): env.ssao_enabled = true],
+		"glow": [func(): env.glow_enabled = false, func(): env.glow_enabled = true],
+		"fog": [func(): env.fog_enabled = false, func(): env.fog_enabled = true],
+		"sun shadows": [func(): main.sun.shadow_enabled = false, func(): main.sun.shadow_enabled = true],
+		"soft shadow filter 5 -> 3": [func(): RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM),
+			func(): RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_ULTRA)],
+		"msaa 2x": [func(): vp.msaa_3d = Viewport.MSAA_DISABLED, func(): vp.msaa_3d = Viewport.MSAA_2X],
+		"fxaa": [func(): vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED, func(): vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA],
+		"ui": [func(): main.ui_layer.visible = false, func(): main.ui_layer.visible = true],
+		"dust": [func(): main.dust.visible = false, func(): main.dust.visible = true],
+		"vignette": [func(): main.vignette_layer.visible = false, func(): main.vignette_layer.visible = true],
+	}
+	var lamps: Array = main.world.get_children().filter(func(n): return n is OmniLight3D and n.shadow_enabled)
+	if not lamps.is_empty():
+		toggles["bay lamp shadows (%d)" % lamps.size()] = [func(): for l in lamps: l.shadow_enabled = false,
+			func(): for l in lamps: l.shadow_enabled = true]
+	var station: Array = main.world.get_children().filter(func(n): return n.scene_file_path.ends_with("station.glb"))
+	if not station.is_empty():
+		toggles["station model"] = [func(): station[0].visible = false, func(): station[0].visible = true]
+	var base := await _gpu_ms()
+	print("GPU %-30s gpu %6.2f ms   cpu render %5.2f ms" % [what, base[0], base[1]])
+	for k in toggles:
+		toggles[k][0].call()
+		var ms := await _gpu_ms()
+		toggles[k][1].call()
+		print("GPU     %-28s saves %5.2f ms gpu" % [k, base[0] - ms[0]])
+
+
+## `-- --autoshot --compare` (in a window): fixed views, each rendered as the game has it and again with
+## each candidate render change, with the GPU time and how different the picture is (diff images saved
+## 8x brighter, so even faint changes show).
+func _compare() -> void:
+	Engine.max_fps = 0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	await _secs(2.0)
+	var p = main.player
+	var cands := {
+		"ssao_half": [func(): RenderingServer.environment_set_ssao_quality(RenderingServer.ENV_SSAO_QUALITY_HIGH, true, 0.5, 2, 50.0, 300.0),
+			func(): RenderingServer.environment_set_ssao_quality(RenderingServer.ENV_SSAO_QUALITY_HIGH, false, 0.5, 2, 50.0, 300.0)],
+		"shadow_4096": [func(): RenderingServer.directional_shadow_atlas_set_size(4096, true),
+			func(): RenderingServer.directional_shadow_atlas_set_size(8192, true)],
+		"soft_filter_high": [func(): RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_HIGH),
+			func(): RenderingServer.directional_soft_shadow_filter_set_quality(RenderingServer.SHADOW_QUALITY_SOFT_ULTRA)],
+	}
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--cands="):
+			var keep := Array(a.substr(8).split(","))
+			for k in cands.keys():
+				if not k in keep:
+					cands.erase(k)
+	var views := []
+	# 1: the start, the station behind the ship
+	views.append(["start", func(): pass])
+	# 2: close on the ship's hull
+	views.append(["hull", func():
+		main._zoom_to = 0.35
+		main.zoom = 0.35])
+	# 3: the docking bay mouth
+	views.append(["bay", func():
+		var bay: Dictionary = main.station_lm().bay
+		p.position = bay.mouth + bay.out * 250.0 + Vector3(30, 20, 0)
+		main.aim = Basis.looking_at((bay.pad - p.position).normalized(), Vector3.UP)
+		p.basis = main.aim
+		p.stop()
+		main._zoom_to = 1.0
+		main.zoom = 1.0
+		main.snap_camera()])
+	# 4: among the rocks of a Wild anomaly
+	views.append(["rocks", func():
+		var at := _find(func(s, l): return s.cat == Game.CAT_PURPLE and l.kind == "anomaly" and l.wormhole < 0)
+		main.enter_location(at[0], at[1])
+		main._pirate_timer = -1.0])
+	main.command = true  # (a free cursor: the real mouse can't swing the camera)
+	for v in views:
+		Engine.time_scale = 1.0
+		main.ui_layer.visible = true
+		v[1].call()
+		await _secs(2.0)
+		Engine.time_scale = 0.0  # everything holds still, so frames match
+		main.ui_layer.visible = false
+		await get_tree().create_timer(0.3, true, false, true).timeout
+		var base := await _grab()
+		var again := await _grab()
+		base[0].save_png(dir.path_join("cmp_%s_base.png" % v[0]))
+		print("CMP %-6s base gpu %6.2f ms   (noise: base vs base %s)" % [v[0], base[1], _diff(base[0], again[0], "")])
+		for k in cands:
+			cands[k][0].call()
+			var img := await _grab()
+			cands[k][1].call()
+			print("CMP %-6s %-18s gpu %6.2f ms   %s" % [v[0], k, img[1], _diff(base[0], img[0], dir.path_join("cmp_%s_%s" % [v[0], k]))])
+	Engine.time_scale = 1.0
+	get_tree().quit()
+
+
+## The frame as an image, and the GPU time (averaged over 60 frames).
+func _grab() -> Array:
+	await _wait(30)
+	var rid := get_viewport().get_viewport_rid()
+	var g := 0.0
+	for i in 60:
+		await get_tree().process_frame
+		g += RenderingServer.viewport_get_measured_render_time_gpu(rid)
+	await RenderingServer.frame_post_draw
+	return [get_viewport().get_texture().get_image(), g / 60.0]
+
+
+## How different two frames are: the mean difference (0-255 scale), the share of pixels off by more than 3 and
+## by more than 12 levels, and the largest. Saves the difference (x8) and both crops when `path` is given.
+func _diff(a: Image, b: Image, path: String) -> String:
+	a.convert(Image.FORMAT_RGB8)
+	b.convert(Image.FORMAT_RGB8)
+	var w := a.get_width()
+	var h := a.get_height()
+	var da := a.get_data()
+	var db := b.get_data()
+	var total := 0
+	var over3 := 0
+	var over12 := 0
+	var mx := 0
+	var out := PackedByteArray()
+	out.resize(da.size())
+	for i in range(0, da.size(), 3):
+		var d := maxi(absi(da[i] - db[i]), maxi(absi(da[i + 1] - db[i + 1]), absi(da[i + 2] - db[i + 2])))
+		total += d
+		if d > 3:
+			over3 += 1
+		if d > 12:
+			over12 += 1
+		mx = maxi(mx, d)
+		var v := mini(255, d * 8)
+		out[i] = v
+		out[i + 1] = v
+		out[i + 2] = v
+	if path != "":
+		Image.create_from_data(w, h, false, Image.FORMAT_RGB8, out).save_png(path + "_diff.png")
+		b.save_png(path + ".png")
+	var n := float(w * h)
+	return "mean %.2f   >3: %.2f%%   >12: %.3f%%   max %d" % [total / n, over3 * 100.0 / n, over12 * 100.0 / n, mx]
+
+
+## Average GPU and render-CPU time over 120 frames.
+func _gpu_ms() -> Array:
+	var rid := get_viewport().get_viewport_rid()
+	await _wait(20)
+	var g := 0.0
+	var c := 0.0
+	for i in 120:
+		await get_tree().process_frame
+		g += RenderingServer.viewport_get_measured_render_time_gpu(rid)
+		c += RenderingServer.viewport_get_measured_render_time_cpu(rid)
+	return [g / 120.0, c / 120.0]
+
+
+## Average and 95th-percentile frame time over 300 frames (headless: the CPU side only). Returns the average.
+func _measure(what: String, quiet := false) -> float:
+	await _wait(10)
+	var frames := []
+	var t := Time.get_ticks_usec()
+	for i in 300:
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		frames.append((now - t) / 1000.0)
+		t = now
+	var avg: float = frames.reduce(func(s, x): return s + x, 0.0) / frames.size()
+	frames.sort()
+	if not quiet:
+		print("BENCH %-34s frame %6.2f ms (95%% %6.2f)   nodes %d" % [what, avg, frames[284],
+			Performance.get_monitor(Performance.OBJECT_NODE_COUNT)])
+	return avg
+
+
+## What each part costs: turn it off, measure, turn it back on.
+func _ablate(base: float) -> void:
+	var parts := {}
+	for g in ["asteroids", "chunks", "pirates", "npcs", "crates"]:
+		parts["group " + g] = get_tree().get_nodes_in_group(g)
+	var bullet_script = load("res://scripts/bullet.gd")
+	parts["bullets"] = main.world.get_children().filter(func(n): return n.get_script() == bullet_script)
+	for n in ["player", "dust", "warp_fx", "overview", "target_panel", "cursor"]:
+		parts[n] = [main.get(n)]
+	parts["main"] = [main]
+	parts["Game"] = [Game]
+	parts["Sfx"] = [Sfx]
+	parts["hud process (radar)"] = [main.hud]
+	for k in parts:
+		var nodes: Array = parts[k].filter(func(n): return n != null and is_instance_valid(n) and n.is_processing())
+		if nodes.is_empty():
+			continue
+		for n in nodes:
+			n.set_process(false)
+		var ms := await _measure(k, true)
+		for n in nodes:
+			if is_instance_valid(n):
+				n.set_process(true)
+		print("BENCH     %-30s saves %5.2f ms" % [k, base - ms])
+	for k in main.hud._parts:
+		var c: Control = main.hud._parts[k]
+		c.visible = false
+		var ms := await _measure(k, true)
+		c.visible = true
+		print("BENCH     hud part %-21s saves %5.2f ms" % [k, base - ms])
 
 
 func _process(_delta: float) -> void:

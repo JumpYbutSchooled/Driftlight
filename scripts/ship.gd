@@ -487,7 +487,7 @@ func _collide_rocks() -> void:
 		var pv := vel.dot(pn)
 		if pv < 0.0:
 			vel -= pn * pv * 1.3
-	for a in get_tree().get_nodes_in_group("asteroids"):
+	for a in main.group("asteroids"):
 		var d: Vector3 = position - a.position
 		var minr: float = a.radius + radius * 0.6
 		if d.length_squared() < minr * minr and d.length_squared() > 0.01:

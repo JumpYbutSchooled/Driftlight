@@ -92,25 +92,37 @@ func _ready() -> void:
 		s.bus = "Music"
 		add_child(s)
 		_one_shots.append(s)
-	_streams["laser"] = _tone(0.22, 230.0, 72.0, 0.5, 18.0)
-	_streams["hit"] = _mix([_tone(0.3, 110.0, 38.0, 0.6, 10.0), _rumble(0.25, 0.35, 0.08)])
-	_streams["pickup"] = _tone(0.16, 300.0, 470.0, 0.4, -6.0)
-	_streams["explode"] = _mix([_tone(1.3, 62.0, 24.0, 0.7, 3.0), _rumble(1.6, 0.8, 0.035)])
-	_streams["beep"] = _tone(0.1, 440.0, 440.0, 0.35, 0.0)
-	_streams["warp"] = _mix([_tone(1.6, 42.0, 150.0, 0.45, -1.5, true), _rumble(1.6, 0.35, 0.03, true)])
-	_streams["charge"] = _mix([_tone(2.2, 30.0, 96.0, 0.4, -1.0, true), _tone(2.2, 60.0, 192.0, 0.12, -1.0, true)])
-	_streams["arrive"] = _tone(0.9, 190.0, 46.0, 0.45, 4.0)
-	_streams["click"] = _tone(0.06, 260.0, 190.0, 0.25, 0.0)
-	_streams["hover"] = _tone(0.04, 360.0, 360.0, 0.12, 0.0)
-	_streams["dock"] = _mix([_tone(0.5, 95.0, 55.0, 0.6, 6.0), _rumble(0.3, 0.45, 0.1), _tone(0.9, 196.0, 196.0, 0.18, 0.0)])
-	_streams["boost"] = _mix([_rumble(0.6, 0.5, 0.05), _tone(0.6, 48.0, 70.0, 0.35, -2.0)])
-	_streams["refine"] = _notes([262.0, 330.0, 392.0], 0.12)
-	_streams["found"] = _notes([220.0, 330.0, 440.0, 660.0], 0.12)
-	_streams["alarm"] = _notes([440.0, 330.0, 440.0, 330.0], 0.12)
-	_engine.stream = _engine_loop()
-	_beam.stream = _beam_loop()
 	_thread = Thread.new()
-	_thread.start(_build_music)
+	_thread.start(_build_sounds)
+
+
+## Runs on a worker thread, so the game never waits for it (synthesizing takes a few seconds): every sound
+## effect, then the music. Anything asked to play before its sound is ready just stays quiet.
+func _build_sounds() -> void:
+	var s := {}
+	s["click"] = _tone(0.06, 260.0, 190.0, 0.25, 0.0)
+	s["hover"] = _tone(0.04, 360.0, 360.0, 0.12, 0.0)
+	s["laser"] = _tone(0.22, 230.0, 72.0, 0.5, 18.0)
+	s["hit"] = _mix([_tone(0.3, 110.0, 38.0, 0.6, 10.0), _rumble(0.25, 0.35, 0.08)])
+	s["pickup"] = _tone(0.16, 300.0, 470.0, 0.4, -6.0)
+	s["explode"] = _mix([_tone(1.3, 62.0, 24.0, 0.7, 3.0), _rumble(1.6, 0.8, 0.035)])
+	s["beep"] = _tone(0.1, 440.0, 440.0, 0.35, 0.0)
+	s["warp"] = _mix([_tone(1.6, 42.0, 150.0, 0.45, -1.5, true), _rumble(1.6, 0.35, 0.03, true)])
+	s["charge"] = _mix([_tone(2.2, 30.0, 96.0, 0.4, -1.0, true), _tone(2.2, 60.0, 192.0, 0.12, -1.0, true)])
+	s["arrive"] = _tone(0.9, 190.0, 46.0, 0.45, 4.0)
+	s["dock"] = _mix([_tone(0.5, 95.0, 55.0, 0.6, 6.0), _rumble(0.3, 0.45, 0.1), _tone(0.9, 196.0, 196.0, 0.18, 0.0)])
+	s["boost"] = _mix([_rumble(0.6, 0.5, 0.05), _tone(0.6, 48.0, 70.0, 0.35, -2.0)])
+	s["refine"] = _notes([262.0, 330.0, 392.0], 0.12)
+	s["found"] = _notes([220.0, 330.0, 440.0, 660.0], 0.12)
+	s["alarm"] = _notes([440.0, 330.0, 440.0, 330.0], 0.12)
+	call_deferred("_sounds_ready", s, _engine_loop(), _beam_loop())
+	_build_music()
+
+
+func _sounds_ready(s: Dictionary, engine: AudioStreamWAV, beam: AudioStreamWAV) -> void:
+	_streams = s
+	_engine.stream = engine
+	_beam.stream = beam
 
 
 func _exit_tree() -> void:
@@ -122,6 +134,8 @@ func _exit_tree() -> void:
 ## of gunfire never cuts them off; short ones take a free voice (or the oldest). The same sound asked for again
 ## within a couple of frames doesn't stack up into one loud click.
 func play(sound: String, db := 0.0, pitch := 1.0) -> void:
+	if not _streams.has(sound):
+		return  # (still being made)
 	var now := Time.get_ticks_msec()
 	if now - _last.get(sound, -1000) < MIN_GAP * 1000.0 and not _long.has(sound):
 		return
@@ -145,7 +159,7 @@ func play(sound: String, db := 0.0, pitch := 1.0) -> void:
 ## The mining beam's hum (0: off, 1: a beam cutting).
 func set_beam(level: float) -> void:
 	_beam_level = move_toward(_beam_level, level, 0.12)
-	if _beam_level < 0.01:
+	if _beam_level < 0.01 or _beam.stream == null:
 		if _beam.playing:
 			_beam.stop()
 		return
@@ -158,7 +172,7 @@ func set_beam(level: float) -> void:
 ## The engine rumble follows the throttle (0..1); `hot` (boost / warp) pitches it up a little.
 func set_engine(level: float, hot := false) -> void:
 	_engine_level = lerpf(_engine_level, level, 0.08)
-	if _engine_level < 0.01:
+	if _engine_level < 0.01 or _engine.stream == null:
 		if _engine.playing:
 			_engine.stop()
 		return
@@ -287,8 +301,8 @@ func _shot(stream: AudioStreamWAV, pitch: float, db: float) -> void:
 	p.play()
 
 
-## Runs on a worker thread: the organ tone (a seamless 1 s loop of two slightly detuned ranks of pipes,
-## so it slowly beats), the short pipe note for the figure and the clock tick.
+## (On the worker thread, after the sound effects.) The organ tone (a seamless 1 s loop of two slightly
+## detuned ranks of pipes, so it slowly beats), the short pipe note for the figure and the clock tick.
 func _build_music() -> void:
 	var partials := [[1, 1.0], [2, 0.55], [3, 0.3], [4, 0.26], [5, 0.07], [6, 0.11], [8, 0.07]]
 	var n := RATE
@@ -373,9 +387,10 @@ func _rumble(dur: float, vol: float, smooth: float, swell := false) -> AudioStre
 	data.resize(n * 2)
 	var y := 0.0
 	var y2 := 0.0
+	var rng := RandomNumberGenerator.new()  # (its own: this runs on the worker thread)
 	for i in n:
 		var t := float(i) / n
-		y += (randf_range(-1.0, 1.0) - y) * smooth
+		y += (rng.randf_range(-1.0, 1.0) - y) * smooth
 		y2 += (y - y2) * smooth * 2.0
 		var env := sin(t * PI) if swell else minf(1.0, t * dur / 0.01) * (1.0 - t) * (1.0 - t)
 		data.encode_s16(i * 2, int(clampf(y2 * env * vol * 6.0, -1.0, 1.0) * 32767.0))

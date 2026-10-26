@@ -632,15 +632,15 @@ func _aim_raycast() -> void:
 	var best := 8000.0
 	var shoot := 8000.0  # civilian ships can be picked out but not shot, so the turrets look past them
 	aim_target = null
-	for group in ["pirates", "crates", "asteroids", "npcs"]:
-		for n in get_tree().get_nodes_in_group(group):
-			if not n.visible:
+	for g in ["pirates", "crates", "asteroids", "npcs"]:
+		for n in group(g):
+			if not is_instance_valid(n) or not n.visible:
 				continue
 			var t := _ray_sphere(o, d, n.position, n.radius)
 			if t > 0.0 and t < best:
 				best = t
 				aim_target = n
-			if t > 0.0 and t < shoot and group != "npcs":
+			if t > 0.0 and t < shoot and g != "npcs":
 				shoot = t
 	aim_point = o + d * (shoot if shoot < 8000.0 else 2500.0)
 
@@ -838,7 +838,9 @@ func _update_screen_fx(delta: float) -> void:
 		shake(0.05)
 	var tm := tunnel.material as ShaderMaterial
 	var cur: float = tm.get_shader_parameter("intensity")
-	tm.set_shader_parameter("intensity", move_toward(cur, want * 0.85, delta * (3.0 if want > cur else 6.0)))
+	var now_i := move_toward(cur, want * 0.85, delta * (3.0 if want > cur else 6.0))
+	tm.set_shader_parameter("intensity", now_i)
+	tunnel.visible = now_i > 0.0  # (at 0 it's all see-through: don't run it over the whole screen for nothing)
 	var vs := get_viewport().get_visible_rect().size
 	tm.set_shader_parameter("res", vs)
 	# the speed lines stream out of the point the ship is flying toward, wherever the camera is looking (or,
@@ -877,6 +879,7 @@ func _update_screen_fx(delta: float) -> void:
 	vm.set_shader_parameter("fringe", move_toward(fr, 0.0016 + 0.012 * want, delta * 0.02))
 	dust.stretch = 1.0 if phase == "travel" else (0.9 if player.cruise_v > 0.0 else 0.0)
 	dust.dir = player.forward()
+	dust.zoom = zoom
 	dust.offset = warp_scroll
 	if backdrop.get_child_count() > 0:
 		# the planet is far away and barely moves, until you warp: then it's left behind fast

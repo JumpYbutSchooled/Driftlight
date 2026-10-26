@@ -71,12 +71,16 @@ void fragment() {
 	// veins: a network of fractures filled with ore, in some parts of the rock, plus a finer web of
 	// hairline cracks; the crack pattern is bent a little by noise so it doesn't look geometric
 	float zone = smoothstep(0.5, 0.72, fbm3(objpos * 1.5 + offset * 0.7)) + ore_tint;
-	vec3 warp = vec3(noise3(objpos * 3.0 + offset), noise3(objpos * 3.0 + offset + 5.2), noise3(objpos * 3.0 + offset + 9.4)) - 0.5;
-	float w = ore_amount * 0.16 * (0.5 + 1.0 * noise3(objpos * 6.0 + offset));
-	float big = 1.0 - smoothstep(w * 0.4, w, cracks(objpos * 3.2 + warp * 0.6 + offset));
-	float web = 1.0 - smoothstep(w * 0.15, w * 0.45, cracks(objpos * 9.0 + warp * 1.2 + offset * 1.7));
-	float grains = smoothstep(0.78, 0.86, noise3(m * 1.7 + offset)) * zone;  // specks of ore in the stone round the veins
-	float ore = clamp((big + web * 0.5) * zone + grains * 0.5, 0.0, 1.0);
+	float big = 0.0;
+	float ore = 0.0;
+	if (zone > 0.0) {  // (outside the ore zones none of this shows, so it isn't worked out there)
+		vec3 warp = vec3(noise3(objpos * 3.0 + offset), noise3(objpos * 3.0 + offset + 5.2), noise3(objpos * 3.0 + offset + 9.4)) - 0.5;
+		float w = ore_amount * 0.16 * (0.5 + 1.0 * noise3(objpos * 6.0 + offset));
+		big = 1.0 - smoothstep(w * 0.4, w, cracks(objpos * 3.2 + warp * 0.6 + offset));
+		float web = 1.0 - smoothstep(w * 0.15, w * 0.45, cracks(objpos * 9.0 + warp * 1.2 + offset * 1.7));
+		float grains = smoothstep(0.78, 0.86, noise3(m * 1.7 + offset)) * zone;  // specks of ore in the stone round the veins
+		ore = clamp((big + web * 0.5) * zone + grains * 0.5, 0.0, 1.0);
+	}
 	ALBEDO = mix(rock, ore_color * mix(0.45, 0.8, big), ore);
 	ROUGHNESS = mix(0.97, 0.3, ore);
 	METALLIC = ore * 0.5;
@@ -86,8 +90,8 @@ void fragment() {
 	float ridge = 1.0 - abs(noise3(m * 0.05 + offset) * 2.0 - 1.0);
 	float d1 = pits(objpos * 5.0 + offset);
 	float crater = -(1.0 - smoothstep(0.0, 0.42, d1)) * 1.1 + smoothstep(0.34, 0.44, d1) * (1.0 - smoothstep(0.44, 0.56, d1)) * 0.5;
-	float h = fbm3(m * 0.12 + offset) * 2.5 + ridge * ridge * 1.6 + crater * (1.5 + size * 0.04)
-		+ (noise3(m * 0.8) * 0.35 + noise3(m * 3.0) * 0.12) * (1.0 - lod);
+	float fine = lod < 1.0 ? (noise3(m * 0.8) * 0.35 + noise3(m * 3.0) * 0.12) * (1.0 - lod) : 0.0;
+	float h = fbm3(m * 0.12 + offset) * 2.5 + ridge * ridge * 1.6 + crater * (1.5 + size * 0.04) + fine;
 	vec3 dpx = dFdx(VERTEX);
 	vec3 dpy = dFdy(VERTEX);
 	float hx = dFdx(h);
