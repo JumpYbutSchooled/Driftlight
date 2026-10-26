@@ -18,6 +18,8 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--phototest" in OS.get_cmdline_user_args():
+		_phototest()
 	elif "--beamtest" in OS.get_cmdline_user_args():
 		_beamtest()
 	elif "--aptest" in OS.get_cmdline_user_args():
@@ -212,6 +214,44 @@ func _jumptest() -> void:
 	print("JUMPTEST camera turned %.2f deg and the aim %.2f deg across the arrival  %s" % [cam_turn, aim_turn,
 		"PASS" if cam_turn < 1.0 and aim_turn < 1.0 else "FAIL"])
 	print("JUMPTEST map gone afterwards: %s" % (not main.jump_map.visible))
+	get_tree().quit()
+
+
+## `-- --autoshot --phototest`: photo mode freezes time, T runs it again (still in photo mode, ship controls off),
+## T freezes it again, F1 leaves with time running.
+func _phototest() -> void:
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	await _secs(1.5)
+	var ok := true
+	var pos0: Vector3 = main.player.position
+	main.player.throttle = 1.0
+	main.toggle_photo()
+	var t0 := Game.playtime
+	await get_tree().create_timer(0.5, true, false, true).timeout
+	var frozen: bool = Engine.time_scale == 0.0 and absf(Game.playtime - t0) < 0.01 and main.photo
+	print("PHOTOTEST photo mode: time frozen %s" % frozen)
+	main._photo_toggle_time()
+	await _secs(1.0)
+	var running: bool = Engine.time_scale == 1.0 and Game.playtime - t0 > 0.5 and main.photo and main._photo_running \
+		and not main.player.control and main.player.turn_input == Vector3.ZERO
+	print("PHOTOTEST T pressed: time runs %s (%.1f s passed), still in photo mode %s, ship controls off %s" % [running,
+		Game.playtime - t0, main.photo, not main.player.control])
+	var moved: bool = main.player.position.distance_to(pos0) > 1.0
+	print("PHOTOTEST the world moved on (ship coasted %.0f m): %s" % [main.player.position.distance_to(pos0), moved])
+	main._photo_toggle_time()
+	var t1 := Game.playtime
+	await get_tree().create_timer(0.5, true, false, true).timeout
+	var refrozen: bool = Engine.time_scale == 0.0 and absf(Game.playtime - t1) < 0.01
+	print("PHOTOTEST T again: frozen again %s" % refrozen)
+	main.toggle_photo()
+	await _secs(0.5)
+	var back: bool = Engine.time_scale == 1.0 and not main.photo and not main._photo_running
+	print("PHOTOTEST F1: back to the game with time running %s" % back)
+	print("PHOTOTEST RESULT: %s" % ("passed" if frozen and running and moved and refrozen and back else "FAILED"))
 	get_tree().quit()
 
 

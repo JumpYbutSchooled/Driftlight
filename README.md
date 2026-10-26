@@ -84,7 +84,7 @@ peaceful space and spawning tools (F8) - for anyone who just wants to fly the bi
 | M / N | galaxy map (click: route, shift-click: add a stop, double-click: jump drive / portable wormhole) / system map |
 | I / H | inventory (cargo, ship, notebook, guide, stats) / the guide |
 | Wheel / middle-click | zoom / put the camera back behind the ship |
-| F1 | photo mode (P saves a picture) |
+| F1 | photo mode (P saves a picture, T pauses or resumes time in it) |
 | F3 | debug screen, F8 sandbox tools, F11 fullscreen, ESC menu |
 
 Ships are heavy: speed builds up and bleeds off over a few seconds, and turns carry momentum.

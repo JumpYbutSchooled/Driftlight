@@ -169,6 +169,7 @@ var _from_dock := false  # the open map or menu was opened from the station: clo
 var ui_layer: CanvasLayer
 var vignette_layer: CanvasLayer
 var photo := false  # F1 photo mode
+var _photo_running := false  # photo mode with time running again (T)
 var _photo_hint: Label
 var _photo_hint_t := 0.0
 var _photo_us := 0
@@ -458,6 +459,8 @@ func quit_to_title() -> void:
 
 func _process(delta: float) -> void:
 	if photo:
+		if _photo_running:
+			_photo_world(delta)
 		_update_photo()
 		return
 	_update_screen_fx(delta)
@@ -710,6 +713,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if photo:
 		if event is InputEventKey and event.pressed and not event.echo:
 			match event.physical_keycode:
+				KEY_T: _photo_toggle_time()
 				KEY_P, KEY_F12: _photo_save()
 				KEY_H: _photo_hint_t = 0.0 if _photo_hint_t > 0.0 else 9999.0
 				KEY_ESCAPE: toggle_photo()
@@ -1757,6 +1761,7 @@ func toggle_photo() -> void:
 	if not photo and not mode in ["fly", "warp"]:
 		return
 	photo = not photo
+	_photo_running = false  # (photo mode starts frozen; T runs time again)
 	ui_layer.visible = not photo
 	vignette_layer.visible = not photo
 	Engine.time_scale = 0.0 if photo else 1.0
@@ -1789,7 +1794,32 @@ func toggle_photo() -> void:
 
 
 func _photo_help() -> String:
-	return "PHOTO MODE    mouse look    WASD move    E / Q up and down    SHIFT fast    ALT slow    wheel zoom    P save picture    H hide this    F1 back"
+	return "PHOTO MODE  (time %s)    mouse look    WASD move    E / Q up and down    SHIFT fast    ALT slow    wheel zoom    T %s time    P save picture    H hide this    F1 back" % [
+		"running" if _photo_running else "paused", "pause" if _photo_running else "resume"]
+
+
+## T: let the action run again while you stay in photo mode (and T again to freeze it). Your ship's controls stay
+## off, so the free camera is the only thing you steer.
+func _photo_toggle_time() -> void:
+	_photo_running = not _photo_running
+	Engine.time_scale = 1.0 if _photo_running else 0.0
+	player.control = false
+	player.turn_input = Vector3.ZERO
+	Sfx.play("click", -8.0)
+	_photo_hint.text = _photo_help()
+	_photo_hint_t = 4.0
+
+
+## While time runs in photo mode: the parts of the normal frame that keep the world going (a warp in progress,
+## the autopilot, the warp visuals), but none of the ship's own controls.
+func _photo_world(delta: float) -> void:
+	player.control = false
+	player.turn_input = Vector3.ZERO
+	_update_screen_fx(delta)
+	if not travel.is_empty():
+		_update_travel(delta)
+	elif not autopilot.is_empty() and mode == "fly":
+		_update_autopilot(delta)
 
 
 ## Free camera, driven by real time (the game clock is stopped).

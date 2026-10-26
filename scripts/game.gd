@@ -7,7 +7,7 @@ signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 signal jettisoned(ore: String, q: int, n: int)  # cargo thrown out of the hold (main spawns it as loose chunks)
 
-const VERSION := 12  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 13  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots: your pilot, and a sandbox where everything is free (anyone can open it)
 const SLOTS := {"pilot": "driftlight_save.json", "sandbox": "driftlight_admin.json"}
