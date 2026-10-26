@@ -31,7 +31,7 @@ func _ready() -> void:
 			get_tree().quit()
 			return
 	_http = HTTPRequest.new()
-	_http.timeout = 60.0
+	_http.timeout = 900.0  # (the release zip is ~90 MB: 60 s was too close on a slower connection)
 	_http.use_threads = true
 	_http.max_redirects = 10
 	add_child(_http)
