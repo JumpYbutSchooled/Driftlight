@@ -16,8 +16,14 @@ The game **updates itself**: when you start it, it checks for a newer release, d
 background, and installs it when you close the game (or straight away with *Restart to update* on the
 title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight`.
 
-**Version 4 started everyone over.** Saves from earlier versions are set aside (renamed `..._before_v4.json`,
-never deleted) and you begin again in a Wren.
+**Backups.** Since v7 the game keeps dated copies of your save in the `backups` folder there: one each time
+you start and stop playing, and one every 10 minutes of play (the last 40 are kept). A save it can't use is
+moved there, never deleted. If the save is missing or damaged, or an old copy of the game wrote over it, the
+newest good backup loads by itself when you press *Continue*. Keep one copy of the game and let it update
+itself; an old copy can still write over your save, but v7 and later recover it from the backups.
+
+**Version 4 started everyone over.** Saves from earlier versions are set aside, never deleted, and you
+begin again in a Wren.
 
 ## How to progress
 

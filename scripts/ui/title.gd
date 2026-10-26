@@ -138,7 +138,7 @@ func _draw() -> void:
 		draw_string(UI.body, Vector2(0, y + 92), "SANDBOX   -   everything free, jump anywhere, god mode, spawn tools (F8)", HORIZONTAL_ALIGNMENT_CENTER,
 			vs.x, 18, UI.GOLD)
 	elif Game.reset_note:
-		draw_string(UI.body, Vector2(0, y + 92), "Version 4 started everyone over - your old save was kept as a backup file.",
+		draw_string(UI.body, Vector2(0, y + 92), "Version 4 started everyone over - your old save was kept in the backups folder.",
 			HORIZONTAL_ALIGNMENT_CENTER, vs.x, 17, UI.GOLD)
 	var upd: String = main.updater.status
 	draw_string(UI.body, Vector2(30, vs.y - 26), "v%d" % Game.VERSION + ("   -   " + upd if upd != "" else ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 14,

@@ -7,12 +7,13 @@ signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 signal jettisoned(ore: String, q: int, n: int)  # cargo thrown out of the hold (main spawns it as loose chunks)
 
-const VERSION := 6  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 7  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots: your pilot, and a sandbox where everything is free (anyone can open it)
-const SLOTS := {"pilot": "user://driftlight_save.json", "sandbox": "user://driftlight_admin.json"}
-const SAVE_PATH := "user://driftlight_save.json"
+const SLOTS := {"pilot": "driftlight_save.json", "sandbox": "driftlight_admin.json"}
 const SAVE_VERSION := 2  # saves older than this are set aside (v4 started everyone over)
+const BACKUPS_KEPT := 40  # rolling copies of each save kept in user://backups (old copies of the game never touch it)
+const BACKUP_EVERY := 600.0  # seconds of play between rolling backups
 const GALAXY_SEED := 20261024
 const GALAXY_RADIUS := 2650.0
 const SYSTEM_COUNT := 1000
@@ -552,8 +553,14 @@ var docked := false  # (main sets it) at a station: storage can be drawn on for 
 var dirty := false  # something changed since the last save
 var playtime := 0.0
 var no_save := false  # set by the screenshot test so it never touches the player's save
-var save_path := SAVE_PATH
+var save_root := "user://"  # where the saves live (the save test points this at a scratch folder)
+var save_path := "user://driftlight_save.json"
 var save_slot := "pilot"  # which save slot is in use
+var in_game := false  # a game is loaded or started: before that (on the title) there's nothing of the player's to save
+var load_error := ""  # why the last load failed
+var save_too_new := 0  # the save was made by this newer version of the game, so this copy won't touch it
+var loaded_backup := ""  # the save was missing or unusable and this backup was loaded instead
+var _backup_at := 0.0  # playtime at the last rolling backup
 var sandbox := false  # playing the sandbox slot
 var god := false  # sandbox: can't be hurt
 var peaceful := false  # sandbox: no pirates
@@ -858,6 +865,7 @@ func new_game() -> void:
 	storage = _empty_storage()
 	auto_store = true
 	playtime = 0.0
+	_backup_at = 0.0
 	route_target = -1
 	current_system = 0
 	current_loc = 0
@@ -2392,28 +2400,89 @@ func use_slot(s: String) -> void:
 	god = sandbox
 	peaceful = false
 	if not no_save:
-		save_path = SLOTS[s]
+		save_path = save_root.path_join(SLOTS[s])
 
 
-## v4 started everyone over: saves from before it are set aside as backups (never deleted).
+## Saves this copy of the game can't use are moved into the backups folder, never deleted: saves from before
+## v4 (which started everyone over), unreadable ones, and ones an old copy of the game wrote over. Continue
+## then picks up the newest good backup, so running an old copy can't wipe anyone's progress.
 func migrate_saves() -> void:
 	if no_save:
 		return
+	reset_note = false
 	for s in SLOTS:
-		var path: String = SLOTS[s]
+		var path: String = save_root.path_join(SLOTS[s])
+		var moved := false
 		for p in [path, path + ".bak"]:
 			if not FileAccess.file_exists(p):
 				continue
 			var data = _read_save(p)
 			if data != null and int(data.get("version", 1)) >= SAVE_VERSION:
 				continue
-			var real := ProjectSettings.globalize_path(p)
-			var keep := real.replace(".json", "_before_v4.json")
-			if FileAccess.file_exists(keep):
-				DirAccess.remove_absolute(real)
-			else:
-				DirAccess.rename_absolute(real, keep)
+			_keep_copy(path, p, "set_aside" + ("_bak" if p.ends_with(".bak") else ""), true)
+			moved = true
+		if moved and s == "pilot" and _pick_save(path) == null:
 			reset_note = true
+
+
+## Copy (or move) a save file into the backups folder as <slot>_<date and time>_<why>.json, then drop the
+## oldest copies past BACKUPS_KEPT.
+func _keep_copy(slot_path: String, from: String, why: String, move := false) -> void:
+	var dir := save_root.path_join("backups")
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+	var stamp := Time.get_datetime_string_from_system().replace(":", "-")
+	var base := dir.path_join("%s_%s_%s" % [slot_path.get_file().get_basename(), stamp, why])
+	var to := base + ".json"
+	var n := 2
+	while FileAccess.file_exists(to):
+		to = "%s_%d.json" % [base, n]
+		n += 1
+	if move:
+		DirAccess.rename_absolute(ProjectSettings.globalize_path(from), ProjectSettings.globalize_path(to))
+	else:
+		DirAccess.copy_absolute(ProjectSettings.globalize_path(from), ProjectSettings.globalize_path(to))
+	var all := backups(slot_path)
+	for i in maxi(all.size() - BACKUPS_KEPT, 0):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(all[i]))
+
+
+## The backups of a save slot, oldest first (their names sort by date).
+func backups(slot_path: String) -> Array:
+	var dir := save_root.path_join("backups")
+	var out := []
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(dir)):
+		return out
+	var stem := slot_path.get_file().get_basename() + "_"
+	for f in DirAccess.get_files_at(dir):
+		if f.begins_with(stem) and f.ends_with(".json"):
+			out.append(dir.path_join(f))
+	out.sort()
+	return out
+
+
+## The save data to load for a slot: the save itself, its .bak, or failing both the good backup saved most
+## recently. Returns null (and says why in load_error) when there's nothing this copy of the game can load.
+func _pick_save(path: String):
+	load_error = ""
+	save_too_new = 0
+	loaded_backup = ""
+	var best = null
+	for p in [path, path + ".bak"] + backups(path):
+		var d = _read_save(p)
+		if d == null or int(d.get("version", 1)) < SAVE_VERSION:
+			continue
+		if int(d.get("game", 0)) > VERSION:
+			save_too_new = int(d.game)
+			load_error = "This save was made by a newer version of Driftlight (v%d). Update the game to play it." % save_too_new
+			return null
+		if p.begins_with(path):
+			return d  # the save itself, or its .bak
+		if best == null or float(d.get("saved_at", 0.0)) >= float(best.get("saved_at", 0.0)):
+			best = d
+			loaded_backup = p
+	if best == null:
+		load_error = "Your save couldn't be read."
+	return best
 
 
 ## Sandbox: a bit of everything, and lots of it.
@@ -2450,11 +2519,25 @@ func sandbox_reveal() -> void:
 
 
 func has_save() -> bool:
-	return FileAccess.file_exists(save_path) or FileAccess.file_exists(save_path + ".bak")
+	return FileAccess.file_exists(save_path) or FileAccess.file_exists(save_path + ".bak") or _pick_save(save_path) != null
+
+
+## Closing the game or going back to the title: save, and back up where you left off.
+func end_session() -> void:
+	save_game()
+	if in_game and not no_save and FileAccess.file_exists(save_path):
+		_backup_at = playtime
+		_keep_copy(save_path, save_path, "auto")
+
+
+## Starting over keeps a copy of the save it replaces.
+func keep_before_new_game() -> void:
+	if not no_save and FileAccess.file_exists(save_path):
+		_keep_copy(save_path, save_path, "before_new_game")
 
 
 func save_game() -> void:
-	if no_save:
+	if no_save or not in_game:
 		return
 	var visited := []
 	var scanned := []
@@ -2468,7 +2551,7 @@ func save_game() -> void:
 				scanned.append([s.id, i])
 			elif l.kind == "anomaly" and l.found:
 				found.append(l.anom)
-	var data := {"version": SAVE_VERSION, "credits": credits, "materials": materials, "cargo": cargo, "spices": spices,
+	var data := {"version": SAVE_VERSION, "game": VERSION, "credits": credits, "materials": materials, "cargo": cargo, "spices": spices,
 		"probes": probes, "portals": portals, "owned_ships": owned_ships, "ship_id": ship_id, "weapon_stock": weapon_stock,
 		"loadouts": loadouts, "module_stock": module_stock, "modules_equipped": modules_equipped, "stats": stats,
 		"unlocked": unlocked.keys(), "missions": missions, "route_target": route_target, "route_stops": route_stops,
@@ -2491,15 +2574,18 @@ func save_game() -> void:
 		DirAccess.remove_absolute(real)
 	DirAccess.rename_absolute(ProjectSettings.globalize_path(tmp), real)
 	dirty = false
+	if playtime - _backup_at >= BACKUP_EVERY:
+		_backup_at = playtime
+		_keep_copy(save_path, save_path, "auto")
 	saved.emit()
 
 
 func load_game() -> bool:
-	var data = _read_save(save_path)
+	var data = _pick_save(save_path)
 	if data == null:
-		data = _read_save(save_path + ".bak")
-	if data == null or int(data.get("version", 1)) < SAVE_VERSION:
 		return false
+	if loaded_backup == "" and not no_save:
+		_keep_copy(save_path, save_path if FileAccess.file_exists(save_path) else save_path + ".bak", "session")
 	new_game()
 	credits = int(data.get("credits", 0))
 	materials = _ints(data.get("materials", {}))
@@ -2602,6 +2688,7 @@ func load_game() -> bool:
 	tick_refineries(away)
 	current_system = clampi(int(data.get("system", 0)), 0, systems.size() - 1)
 	current_loc = clampi(int(data.get("loc", 0)), 0, systems[current_system].locs.size() - 1)
+	_backup_at = playtime
 	changed.emit()
 	return true
 

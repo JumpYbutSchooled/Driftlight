@@ -86,6 +86,6 @@ func _to_title() -> void:
 
 
 func _quit() -> void:
-	Game.save_game()
+	Game.end_session()
 	Sfx.save_settings()
 	get_tree().quit()

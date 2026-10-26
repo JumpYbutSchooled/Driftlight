@@ -381,8 +381,7 @@ func _ui(root: Control, node) -> Control:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		if mode != "title":
-			Game.save_game()
+		Game.end_session()
 		Sfx.save_settings()
 		get_tree().quit()
 	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and mode != "title":
@@ -392,6 +391,7 @@ func _notification(what: int) -> void:
 # ---------------------------------------------------------------- game flow
 
 func start_new_game() -> void:
+	Game.keep_before_new_game()
 	Game.new_game()
 	if Game.sandbox:
 		Game.sandbox_fill()
@@ -403,12 +403,19 @@ func start_new_game() -> void:
 
 
 func continue_game() -> void:
+	# a save that won't load is never replaced without asking (it stays in the backups folder either way)
 	if not Game.load_game():
-		Game.say("Couldn't read the save file, starting fresh.", UI.BAD)
-		start_new_game()
+		if Game.save_too_new > 0:
+			ask(Game.load_error, "OK", func(): pass)
+		else:
+			ask(Game.load_error + "\n\nNothing has been overwritten. Start a new game instead? (The old save is kept in the backups folder.)",
+				"Start a new game", start_new_game)
 		return
 	_begin(Game.current_system, Game.current_loc)
 	Game.say("Welcome back, pilot.", Color("9fd3ff"))
+	if Game.loaded_backup != "":
+		Game.say("Your save was missing or damaged, so it was restored from the backup %s." % Game.loaded_backup.get_file(),
+			Color("ffd24a"))
 
 
 func _begin(sys_id: int, loc_i: int) -> void:
@@ -416,6 +423,7 @@ func _begin(sys_id: int, loc_i: int) -> void:
 	player.set_dead(false)
 	player.setup()
 	mode = "fly"
+	Game.in_game = true
 	hud._title = ""
 	enter_location(sys_id, loc_i)
 	_since_save = 0.0
@@ -425,7 +433,8 @@ func quit_to_title() -> void:
 	dock_screen.reset()
 	Game.docked = false
 	_from_dock = false
-	Game.save_game()
+	Game.end_session()
+	Game.in_game = false  # (from here until Continue, nothing on the title can write a save)
 	close_maps()
 	close_inventory()
 	station_ui.hide()
