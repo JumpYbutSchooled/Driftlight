@@ -13,6 +13,7 @@ var vel := Vector3.ZERO
 var radius := 1.6
 var pick_cd := 0.0  # seconds before it can be picked up (jettisoned cargo drifts clear first)
 var tractored := false  # being pulled in by the tractor beam
+var jettisoned := false  # thrown out of the hold: the tractor (and O) leave it be; fly into it to take it back
 var _spin := Vector3.ZERO
 var _mesh: MeshInstance3D
 static var _mats := {}
@@ -50,6 +51,11 @@ static func _material(ore: String, q: int) -> ShaderMaterial:
 	return _mats[key]
 
 
+## Is there room in the ship's hold for this chunk?
+func fits(p) -> bool:
+	return Game.cargo_used() + amount <= p.st.cargo
+
+
 func describe() -> String:
 	return "%s  x%d  -  fly into it to collect" % [Game.ore_label(ore_id, quality, "ore"), amount]
 
@@ -68,7 +74,8 @@ func _process(delta: float) -> void:
 	var to: Vector3 = p.position - position
 	var d := to.length()
 	var reach: float = p.tractor_range()
-	tractored = d < reach
+	# (only what the hold has room for: the rest would just hang round the ship)
+	tractored = d < reach and not jettisoned and fits(p)
 	if tractored:
 		# the pull is gentle at the edge of its reach and fast close in, and always outruns the ship
 		var pull: float = clampf(reach / maxf(d, 1.0), 1.0, 4.0) * (25.0 + reach * 0.06) + p.vel.length()

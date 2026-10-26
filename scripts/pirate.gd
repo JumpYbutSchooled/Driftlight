@@ -154,7 +154,7 @@ func _fire(p) -> void:
 			var off := 0.0 if pellets == 1 else (i - (pellets - 1) / 2.0) * 0.08
 			var dd := dir.rotated(Vector3.UP, off + randf_range(-0.03, 0.03))
 			dd = dd.rotated(dd.cross(Vector3.UP).normalized() if absf(dd.y) < 0.99 else Vector3.RIGHT, randf_range(-0.03, 0.03))
-			main.spawn_bullet(mp, dd, shot, false)
+			main.spawn_bullet(mp, dd, shot, false, Ship.gun_scale(m))
 	_mflash_t = 1.0
 	Sfx.play("laser", -20.0, 0.55 if data.has("boss") else 0.7)
 

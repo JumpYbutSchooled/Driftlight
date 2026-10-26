@@ -26,6 +26,7 @@ const BOLT_SPEED_MULT := 2.5  # bolts fly this much faster than the weapon numbe
 const FIRE_RATE_MULT := 1.5  # and the guns cycle this much quicker
 const BOLT_RANGE := 8000.0  # metres: every weapon reaches as far as you can see to aim
 const BEAM_RANGE := 4000.0  # metres a mining beam reaches
+const GUN_REF := 0.85  # a starter ship's turret size: bolts and beams are drawn to scale against it
 const BEAM_COLLECT := [0.5, 0.6, 0.75, 0.9, 1.0]  # share of the ore a mining beam cuts straight into the hold, by mark
 const TRACTOR_BEAMS := 6  # most loose chunks the tractor pulls in at once
 const LASER_SHADER = preload("res://shaders/laser.gdshader")
@@ -542,6 +543,12 @@ static func _segment_hits_box(a: Vector3, b: Vector3, h: Vector3) -> bool:
 	return true
 
 
+## How much bigger than a starter ship's this gun is (never smaller): its bolts and beam are drawn that much
+## bigger, so a capital ship's guns don't spit specks.
+static func gun_scale(muzzle: Node3D) -> float:
+	return maxf(1.0, muzzle.global_basis.get_scale().x / GUN_REF)
+
+
 ## The bolt a weapon fires from this ship: its numbers with ship/module/blessing bonuses applied, in 3D units.
 func shot(w: Dictionary) -> Dictionary:
 	return {"damage": w.damage * st.damage, "speed": w.speed * st.bolt * Game.WORLD_SCALE * BOLT_SPEED_MULT,
@@ -571,7 +578,7 @@ func fire_at(aim: Vector3) -> int:
 		for k in pellets:
 			var off := 0.0 if pellets == 1 else lerpf(-spread / 2.0, spread / 2.0, k / float(pellets - 1))
 			var d := dir.rotated(Vector3.UP, off + randf_range(-0.01, 0.01)).rotated(right, randf_range(-0.01, 0.01))
-			main.spawn_bullet(mp, d, s, true)
+			main.spawn_bullet(mp, d, s, true, gun_scale(muzzles[i]))
 		_slot_cd[i] = 1.0 / (w.rate * st.fire * FIRE_RATE_MULT)
 		_mflash_t[i] = 1.0
 		_mflash[i].material_override = Models.glow_mat(Color(Color(w.color).lerp(Color.WHITE, 0.5), 0.9))
@@ -652,7 +659,7 @@ func _update_beams(delta: float) -> void:
 			continue
 		var w: Dictionary = Game.WEAPONS[lo[i]]
 		var core: MeshInstance3D = holder.get_child(0)
-		var width: float = core.get_meta("width") * (1.0 + 0.12 * sin(Time.get_ticks_msec() * 0.04 + i * 1.7))
+		var width: float = core.get_meta("width") * gun_scale(muzzles[i]) * (1.0 + 0.12 * sin(Time.get_ticks_msec() * 0.04 + i * 1.7))
 		place_beam(holder, muzzles[i].global_position, p, width)
 		any = true
 		var k: float = w.rate * st.fire * FIRE_RATE_MULT * delta

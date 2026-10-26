@@ -880,6 +880,7 @@ func _update_screen_fx(delta: float) -> void:
 	dust.stretch = 1.0 if phase == "travel" else (0.9 if player.cruise_v > 0.0 else 0.0)
 	dust.dir = player.forward()
 	dust.zoom = zoom
+	dust.size_k = maxf(1.0, player.radius / 5.0)
 	dust.offset = warp_scroll
 	if backdrop.get_child_count() > 0:
 		# the planet is far away and barely moves, until you warp: then it's left behind fast
@@ -2149,18 +2150,22 @@ func toggle_collect() -> void:
 		cancel_autopilot("Collecting stopped")
 		return
 	if _nearest_chunk() == null:
-		Game.say("No loose ore within %s." % UI.dist(COLLECT_RANGE), UI.MUTED)
+		if _nearest_chunk(false) != null:
+			cargo_full()
+		else:
+			Game.say("No loose ore within %s." % UI.dist(COLLECT_RANGE), UI.MUTED)
 		return
 	autopilot = {"mode": "collect", "t": 0.0}
 	Sfx.play("click", -8.0)
 	Game.say("Collecting loose ore - O or any flight key to stop.", Color("8cd8ff"))
 
 
-func _nearest_chunk():
+## The nearest loose chunk O would go for: not jettisoned and (`fits`) with room for it in the hold.
+func _nearest_chunk(fits := true):
 	var best = null
 	var bd := COLLECT_RANGE
 	for c in get_tree().get_nodes_in_group("chunks"):
-		if c.is_queued_for_deletion() or c.pick_cd > 0.0:
+		if c.is_queued_for_deletion() or c.pick_cd > 0.0 or c.jettisoned or (fits and not c.fits(player)):
 			continue
 		var d: float = player.position.distance_to(c.position)
 		if d < bd:
@@ -2187,6 +2192,9 @@ func _update_autopilot(delta: float) -> void:
 			return
 		var c = _nearest_chunk()
 		if c == null:
+			if _nearest_chunk(false) != null:
+				cancel_autopilot("Cargo hold full")  # (what's left won't fit: it stays where it is)
+				return
 			autopilot = {}
 			player.cruise_v = 0.0
 			Game.say("All the loose ore in reach is collected.", UI.GOOD)
@@ -2568,6 +2576,7 @@ func _on_jettison(ore: String, q: int, n: int) -> void:
 		var c = spawn_chunk(ore, q, a, player.position + back * (player.radius + 4.0) + off * player.radius * 0.3,
 			player.vel + back * randf_range(8.0, 18.0) + off * 4.0)
 		c.pick_cd = 3.0
+		c.jettisoned = true
 
 ## Sandbox: straight to any system through a short jump, arriving at its station or first planet.
 func admin_jump(id: int) -> void:
@@ -2674,7 +2683,8 @@ func _laser_mat(color: Color) -> ShaderMaterial:
 	return _laser_mats[color]
 
 
-func spawn_bullet(pos: Vector3, dir: Vector3, s: Dictionary, friendly: bool) -> void:
+## `k`: how big the gun is (Ship.gun_scale): the bolt is drawn to match it.
+func spawn_bullet(pos: Vector3, dir: Vector3, s: Dictionary, friendly: bool, k := 1.0) -> void:
 	var b := Bullet.new()
 	b.main = self
 	# the beam: a white-hot core in a coloured glow, laid back from the bolt's head; it starts at nothing
@@ -2686,9 +2696,9 @@ func spawn_bullet(pos: Vector3, dir: Vector3, s: Dictionary, friendly: bool) -> 
 	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	b.add_child(beam)
 	b.beam = beam
-	b.beam_width = s.size.x * 0.4
-	b.beam_len = s.size.y * (3.0 if friendly else 1.8)  # player bolts are fast: longer beams
-	b.add_child(Models.glow_quad(Color(Color(s.color).lerp(Color.WHITE, 0.3), 0.5), s.size.x * 0.35))  # a tight hot spot at the head
+	b.beam_width = s.size.x * 0.4 * k
+	b.beam_len = s.size.y * (3.0 if friendly else 1.8) * k  # player bolts are fast: longer beams
+	b.add_child(Models.glow_quad(Color(Color(s.color).lerp(Color.WHITE, 0.3), 0.5), s.size.x * 0.35 * k))  # a tight hot spot at the head
 	b.vel = dir * s.speed
 	b.life = s.life * (player.st.bolt if friendly else 1.0)
 	b.damage = s.damage

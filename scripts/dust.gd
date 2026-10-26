@@ -19,6 +19,8 @@ var offset := Vector3.ZERO  # extra scroll (warp): the dust rushes past along -d
 var stretch := 0.0  # 0..1 warp streaking
 var dir := Vector3.FORWARD
 var zoom := 1.0  # the camera's zoom (main sets it): pulled back, the motes thin out or they'd fill the view
+var size_k := 1.0  # how much bigger than a starter ship yours is (main sets it): the dust is spread that much wider,
+# so it streams past a capital ship no faster than past a skiff
 var _base := []
 var _puff_base := []
 var _puffs: MultiMeshInstance3D
@@ -117,16 +119,17 @@ func _process(delta: float) -> void:
 	_update_trail(now, cp)
 	var n := clampi(roundi(COUNT / sqrt(maxf(zoom, 1.0))), 8, COUNT)
 	multimesh.visible_instance_count = n
+	var box := BOX * size_k
 	for i in n:
-		var b: Vector3 = _base[i]
-		var p := Vector3(fposmod(b.x - cp.x, BOX), fposmod(b.y - cp.y, BOX), fposmod(b.z - cp.z, BOX)) - Vector3.ONE * BOX * 0.5
+		var b: Vector3 = _base[i] * size_k
+		var p := Vector3(fposmod(b.x - cp.x, box), fposmod(b.y - cp.y, box), fposmod(b.z - cp.z, box)) - Vector3.ONE * box * 0.5
 		multimesh.set_instance_transform(i, Transform3D(Basis.IDENTITY, cam.global_position + p))
 	_puffs.global_transform = Transform3D.IDENTITY
+	var pbox := PUFF_BOX * size_k
 	for i in PUFFS:
-		var b: Vector3 = _puff_base[i][0]
-		var p := Vector3(fposmod(b.x - cp.x, PUFF_BOX), fposmod(b.y - cp.y, PUFF_BOX), fposmod(b.z - cp.z, PUFF_BOX)) \
-			- Vector3.ONE * PUFF_BOX * 0.5
-		_puffs.multimesh.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ONE * _puff_base[i][1]), cam.global_position + p))
+		var b: Vector3 = _puff_base[i][0] * size_k
+		var p := Vector3(fposmod(b.x - cp.x, pbox), fposmod(b.y - cp.y, pbox), fposmod(b.z - cp.z, pbox)) - Vector3.ONE * pbox * 0.5
+		_puffs.multimesh.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ONE * _puff_base[i][1] * size_k), cam.global_position + p))
 
 
 ## The trail every mote shares: how far the camera has come since each of POINTS moments over a short window
@@ -134,7 +137,7 @@ func _process(delta: float) -> void:
 ## path, so on a turn the trail curves.
 func _update_trail(now: float, cp: Vector3) -> void:
 	var speed := _vel.length()
-	var longest := MAX_TRAIL * (1.0 + stretch)
+	var longest := MAX_TRAIL * size_k * (1.0 + stretch)
 	var window := clampf(longest / maxf(speed, 1.0), 0.03, 0.1)
 	var pts := []
 	for k in POINTS:
@@ -142,7 +145,7 @@ func _update_trail(now: float, cp: Vector3) -> void:
 	var length := 0.0
 	for k in range(1, POINTS):
 		length += (pts[k] - pts[k - 1]).length()
-	if length < MIN_TRAIL:
+	if length < MIN_TRAIL * size_k:
 		# barely moving: a short straight speck along the way you're drifting (or just ahead)
 		var d := _vel.normalized() if speed > 0.01 else -cam.global_basis.z
 		for k in POINTS:

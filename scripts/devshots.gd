@@ -200,6 +200,26 @@ func _bench() -> void:
 	if "--ablate" in OS.get_cmdline_user_args():
 		await _ablate(base)
 	Input.action_release("fire")
+	# a capital ship: its bolts drawn to the size of its guns, the dust spread to its size
+	var widths := []
+	for n in main.world.get_children():
+		if n.get_script() == load("res://scripts/bullet.gd"):
+			widths.append(snappedf(n.beam_width, 0.01))
+	Game.owned_ships.append("colossus")
+	Game.ship_id = "colossus"
+	p.setup()
+	await _secs(1.0)
+	Input.action_press("fire")
+	await _secs(0.6)
+	Input.action_release("fire")
+	var cap := []
+	for n in main.world.get_children():
+		if n.get_script() == load("res://scripts/bullet.gd") and n.beam_width > widths.max() * 1.5:
+			cap.append(snappedf(n.beam_width, 0.1))
+	print("BENCH bolt widths: wren %s, colossus %s (gun scale %.1f), dust size_k %.1f" % [str(widths.slice(0, 3)), str(cap.slice(0, 3)),
+		p.gun_scale(p.muzzles[0]), main.dust.size_k])
+	Game.ship_id = "wren"
+	p.setup()
 	for n in get_tree().get_nodes_in_group("pirates"):
 		n.queue_free()
 	for n in get_tree().get_nodes_in_group("chunks"):
