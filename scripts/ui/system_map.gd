@@ -139,7 +139,7 @@ func _draw() -> void:
 	var t := Time.get_ticks_msec() / 1000.0
 	var center := size / 2.0
 	draw_string(UI.title, Vector2(24, 50), "SYSTEM MAP  %s" % sys.name.to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, cc)
-	draw_string(font, Vector2(24, 80), "Probes follow your mouse. Fly one over a planet to scan it. Near a hidden anomaly the beeping speeds up and the trail turns red.   N / Esc: close",
+	draw_string(font, Vector2(24, 80), "Probes follow your mouse. Fly one over a planet to scan it. Near a hidden anomaly the beeping speeds up and the trail turns red. A blue star marks an undecoded relic.   N / Esc: close",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("8090a8"))
 
 	# the star, in its own colour and size (and its companion, in a binary)
@@ -183,6 +183,16 @@ func _draw() -> void:
 					draw_rect(Rect2(p - Vector2(3, 12), Vector2(6, 24)), ac)
 					draw_rect(Rect2(p - Vector2(4, 4), Vector2(8, 8)), Color.WHITE)
 					draw_string(font, p + Vector2(-110, 32), l.name, HORIZONTAL_ALIGNMENT_CENTER, 220, 14, ac)
+		# an ancient relic here (shown once you know the place: it's scanned, or the anomaly found), until it's decoded
+		if l.get("relic", false) and (l.found if l.kind == "anomaly" else l.scanned):
+			var rc := Color("7fd8ff")
+			var rp := p + Vector2(34, -34)
+			var rr := 9.0 + sin(t * 3.0) * 1.5
+			draw_rect(Rect2(rp - Vector2(rr, 2), Vector2(rr * 2.0, 4)), rc)
+			draw_rect(Rect2(rp - Vector2(2, rr), Vector2(4, rr * 2.0)), rc)
+			draw_rect(Rect2(rp - Vector2(4, 4), Vector2(8, 8)), Color.WHITE)
+			draw_arc(rp, rr + 6.0, 0.0, TAU, 24, Color(rc, 0.35), 1.5)
+			draw_string(font, rp + Vector2(-60, rr + 22.0), "Relic", HORIZONTAL_ALIGNMENT_CENTER, 120, 13, rc)
 		if i == Game.current_loc:
 			draw_arc(p, 26.0 + sin(t * 4.0) * 3.0, 0.0, TAU, 32, Color.WHITE, 2.0)
 			draw_string(font, p + Vector2(-40, -30), "YOU", HORIZONTAL_ALIGNMENT_CENTER, 80, 13, Color.WHITE)

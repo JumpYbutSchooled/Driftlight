@@ -406,7 +406,7 @@ func _draw_chunk_tags(cam: Camera3D, pp: Vector3) -> void:
 
 ## The warp readout, low on the screen: what's happening, where to, and a thin progress line.
 func _draw_travel(vs: Vector2, trip: Dictionary) -> void:
-	if trip.phase == "exit":
+	if trip.phase in ["exit", "chart"]:
 		return
 	var aligning: bool = trip.phase == "align"
 	var charging: bool = trip.phase == "charge" or aligning

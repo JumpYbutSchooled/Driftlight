@@ -4,6 +4,7 @@ extends CenterContainer
 const UI = preload("res://scripts/ui/ui.gd")
 
 var main
+var _warn: CheckButton  # the Wild space warning switch (refreshed each time the menu opens)
 
 
 func _ready() -> void:
@@ -21,7 +22,7 @@ func _ready() -> void:
 	h.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(h)
 	v.add_child(HSeparator.new())
-	for b in [["Resume", close, "throttle"], ["Save Game", _save, "cargo"]]:
+	for b in [["Resume", close, "throttle"], ["Save Game", _save, "cargo"], ["Get Save Code", _show_code, "cargo"]]:
 		var btn := UI.btn(b[0], b[1], b[2], UI.HEAD)
 		btn.custom_minimum_size = Vector2(0, 52)
 		v.add_child(btn)
@@ -50,6 +51,13 @@ func _ready() -> void:
 	swap.button_pressed = Game.swap_ws
 	swap.toggled.connect(Game.set_swap_ws)
 	v.add_child(swap)
+	var warn := CheckButton.new()
+	warn.text = "Warn before jumping into Wild space"
+	warn.focus_mode = FOCUS_NONE
+	warn.button_pressed = not Game.skip_wild_warning
+	warn.toggled.connect(func(on: bool): Game.skip_wild_warning = not on)
+	_warn = warn
+	v.add_child(warn)
 	v.add_child(HSeparator.new())
 	for b in [["Save & Quit to Title", _to_title, "gate"], ["Quit to Desktop", _quit, "skull"]]:
 		var btn := UI.btn(b[0], b[1], b[2], UI.BAD if b[0].begins_with("Quit") else UI.TEXT)
@@ -58,6 +66,7 @@ func _ready() -> void:
 
 
 func open() -> void:
+	_warn.set_pressed_no_signal(not Game.skip_wild_warning)
 	show()
 	# the game is paused, so main won't release the mouse or switch the cursor: do it here
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -85,6 +94,10 @@ func _save() -> void:
 	Game.save_game()
 	Game.say("Game saved.", UI.GOOD)
 	close()
+
+
+func _show_code() -> void:
+	main.code_panel.open_export()
 
 
 func _to_title() -> void:

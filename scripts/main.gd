@@ -51,6 +51,8 @@ const Confirm = preload("res://scripts/ui/confirm.gd")
 const Title = preload("res://scripts/ui/title.gd")
 const Pause = preload("res://scripts/ui/pause.gd")
 const AdminPanel = preload("res://scripts/ui/admin_panel.gd")
+const JumpMap = preload("res://scripts/ui/jump_map.gd")
+const CodePanel = preload("res://scripts/ui/code_panel.gd")
 const Updater = preload("res://scripts/updater.gd")
 const AUTOSAVE_EVERY := 30.0  # save at least this often...
 const SAVE_AFTER_CHANGE := 5.0  # ...and within this many seconds of anything changing
@@ -74,6 +76,7 @@ const FOV := 72.0
 const WARP_SCROLL_MAX := 1400.0  # m/s the background streams past inside the tunnel
 const FEATURE_SPACING := 16000.0  # metres between the things at one location
 const LOCAL_WARP_MIN := 2500.0  # anything further away than this can be warped to without leaving
+const FLIGHT_MENUS := ["map", "inventory", "fitting"]  # menus opened in flight: the ship (and its autopilot) keeps flying under them
 const ZOOM_MIN := 0.5
 const ZOOM_MAX := 120.0
 const SCAN_RANGE := 7000.0  # survey scanner reach (V)
@@ -157,6 +160,8 @@ var _cam_view := Quaternion.IDENTITY  # the camera's actual turn, easing after _
 var _shake_t := 0.0
 var _noise := FastNoiseLite.new()  # smooth camera shake
 var ap_power := 1.0  # how hard the autopilot pushes (R/F while it flies)
+var jump_map: Control  # the map that swoops between systems when a jump finishes
+var code_panel: Control  # save codes: copy this save as text, or load one from another device
 var auto_travel := false  # T: following the route on its own, warps and gates and all
 var _jump_cd := 0.0  # jump drive recharge
 var _prev_mode := "title"
@@ -257,7 +262,9 @@ func _ready() -> void:
 	title = _ui(root, Title.new())
 	confirm = Confirm.new()
 	root.add_child(confirm)
+	jump_map = _ui(root, JumpMap.new())
 	pause = _ui(root, Pause.new())
+	code_panel = _ui(root, CodePanel.new())  # (over the ESC menu and the title)
 	admin_panel = _ui(root, AdminPanel.new())
 	updater = Updater.new()
 	add_child(updater)
@@ -481,15 +488,18 @@ func _process(delta: float) -> void:
 	player.turn_input = Vector3.ZERO
 	if mode == "fly":
 		_steer()
-		if not autopilot.is_empty():
+	# the autopilot keeps flying with a map, the inventory or the fitting screen open (only a station, a dialog
+	# or a warp take it over)
+	if (mode == "fly" or mode in FLIGHT_MENUS) and not autopilot.is_empty():
+		if mode == "fly":
 			# R/F set how hard the autopilot pushes, without taking the controls back
 			if Input.is_action_pressed("move_up"):
 				ap_power = minf(1.0, ap_power + 0.8 * delta)
 			elif Input.is_action_pressed("move_down"):
 				ap_power = maxf(0.2, ap_power - 0.8 * delta)
-			_update_autopilot(delta)
-		elif auto_travel and travel.is_empty() and player.alive:
-			_update_auto(delta)
+		_update_autopilot(delta)
+	elif mode == "fly" and auto_travel and travel.is_empty() and player.alive:
+		_update_auto(delta)
 	if selected != null and not target_valid(selected):
 		selected = null
 	_scan_cd = maxf(0.0, _scan_cd - delta)
@@ -1069,6 +1079,8 @@ func _dock_goal(lm: Dictionary) -> Vector3:
 # ---------------------------------------------------------------- locations
 
 func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
+	var _warp_aim := aim  # (the heading the ship had: kept when it arrives out of a warp)
+	Game.refresh_relics()  # (relics decoded a week ago or more are back)
 	for c in world.get_children():
 		c.queue_free()
 	for c in backdrop.get_children():
@@ -1157,10 +1169,19 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 		player.position += dir.cross(Vector3.UP).normalized() * (280.0 + _big_clear()) - dir * _big_clear()
 		aim = Basis.looking_at(dir if warped_in else (first.pos - player.position).normalized(), Vector3.UP)
 	_dock_armed = true
-	player.basis = aim
-	player.stop()
-	camera.global_position = player.position + aim.y * 6.0 + aim.z * 18.0 * zoom
-	snap_camera()
+	if warped_in and mode != "title":
+		# out of a warp the ship keeps its heading and the camera keeps its view: nothing snaps or swings round on arrival
+		aim = _warp_aim
+		player.basis = aim
+		player.stop()
+		var view := Basis(_cam_view)
+		camera.global_position = player.position + (view.y * (player.radius * 0.75 + 2.0) + view.z * (player.radius * 2.4 + 7.0)) * zoom
+		camera.global_basis = view
+	else:
+		player.basis = aim
+		player.stop()
+		camera.global_position = player.position + aim.y * 6.0 + aim.z * 18.0 * zoom
+		snap_camera()
 	_wormhole_armed = false
 
 	if loc.pirates:
@@ -2213,6 +2234,8 @@ func _update_autopilot(delta: float) -> void:
 			if _drive(target_pos(t), autopilot.range, delta) <= 0.0:
 				player.throttle = 0.0
 				player.cruise_v = 0.0
+				if mode != "fly":
+					return  # arrived while a menu's open: wait there, the arrival happens once it closes
 				var arrived = autopilot
 				autopilot = {}
 				if arrived.mode == "use" and t is Dictionary and t.has("action"):
@@ -2431,7 +2454,7 @@ func toggle_auto() -> void:
 				wild += 1
 		at = stop_id
 	if wild > 0:
-		ask("Your route goes through %d Wild system%s: pirates everywhere, and you lose your cargo if you're destroyed.\n\nAuto-travel the whole way?" % [
+		ask_wild("Your route goes through %d Wild system%s: pirates everywhere, and you lose your cargo if you're destroyed.\n\nAuto-travel the whole way?" % [
 			wild, "" if wild == 1 else "s"], "Go", _start_auto)
 	else:
 		_start_auto()
@@ -2517,7 +2540,7 @@ func jump_drive(id: int) -> void:
 		return
 	var sys: Dictionary = Game.systems[id]
 	if sys.cat == Game.CAT_PURPLE and not auto_travel and not Game.sandbox:
-		ask("%s is a WILD system: pirates everywhere, and you lose your cargo if you're destroyed.\n\nJump anyway?" % sys.name, "Jump",
+		ask_wild("%s is a WILD system: pirates everywhere, and you lose your cargo if you're destroyed.\n\nJump anyway?" % sys.name, "Jump",
 			_jump_drive_go.bind(id))
 	else:
 		_jump_drive_go(id)
@@ -2855,24 +2878,22 @@ func _update_travel(delta: float) -> void:
 				world.position = -_rush
 				world.visible = _rush.length() < 60000.0
 			if travel.t >= travel.travel:
-				travel.phase = "exit"
-				travel.t = 0.0
-				if travel.kind != "local":
-					travel.arrive.call()
-					# the new place rushes in from far ahead and settles round you
-					_rush = -travel.heading * 30000.0
-					world.position = -_rush
-				world.visible = true
-				_flash(0.4)
-				Sfx.play("arrive", -2.0)
-				fwd = player.forward()
-				# drop out of warp still moving: light sprays out ahead and the ship glides forward
-				var f := _fx(player.position)
-				f.jet(50, Color(travel.color).lightened(0.5), fwd, 200.0, 20.0, 0.8)
-				f.jet(25, Color.WHITE, fwd, 260.0, 8.0, 0.5)
-				player.vel = fwd * player.top_speed() * 1.6
-				_fov_kick = -12.0
-				shake(0.3)
+				if _jump_to_system(travel) >= 0:
+					# a jump to another system: the map swoops over to it before you arrive
+					travel.phase = "chart"
+					travel.t = 0.0
+					jump_map.play(Game.current_system, _jump_to_system(travel))
+				else:
+					_arrive(travel)
+		"chart":
+			# still streaming away under the map; the new system loads behind it at the end
+			player.vel = Vector3.ZERO
+			_rush += travel.heading * _rush_v * delta
+			world.position = -_rush
+			world.visible = _rush.length() < 60000.0
+			if travel.t >= JumpMap.DURATION:
+				_arrive(travel)
+				jump_map.finish()
 		"exit":
 			_scroll_speed = move_toward(_scroll_speed, 0.0, 4000.0 * delta)
 			_rush *= exp(-7.0 * delta)
@@ -2883,6 +2904,35 @@ func _update_travel(delta: float) -> void:
 				_rush = Vector3.ZERO
 				world.position = Vector3.ZERO
 				mode = "fly"
+
+
+## The system a finished warp lands in, if that isn't the one you're in (a jump), else -1.
+func _jump_to_system(trip: Dictionary) -> int:
+	if trip.kind == "local" or not trip.arrive.is_valid():
+		return -1
+	var args: Array = (trip.arrive as Callable).get_bound_arguments()
+	if args.is_empty() or int(args[0]) == Game.current_system:
+		return -1
+	return int(args[0])
+
+
+## The warp is over: arrive (the new place rushes in from far ahead and settles round you) and drop out of warp
+## still moving, light spraying out ahead. The camera is left exactly as it was: no snap, kick or shake.
+func _arrive(trip: Dictionary) -> void:
+	trip.phase = "exit"
+	trip.t = 0.0
+	if trip.kind != "local":
+		trip.arrive.call()
+		_rush = -trip.heading * 30000.0
+		world.position = -_rush
+	world.visible = true
+	_flash(0.4)
+	Sfx.play("arrive", -2.0)
+	var fwd: Vector3 = player.forward()
+	var f := _fx(player.position)
+	f.jet(50, Color(trip.color).lightened(0.5), fwd, 200.0, 20.0, 0.8)
+	f.jet(25, Color.WHITE, fwd, 260.0, 8.0, 0.5)
+	player.vel = fwd * player.top_speed() * 1.6
 
 
 ## How far the ship is off a gate's centre line (sideways, as a vector).
@@ -2926,7 +2976,7 @@ func start_warp(loc_i: int) -> void:
 func try_gate(dest: int) -> void:
 	var d: Dictionary = Game.systems[dest]
 	if d.cat == Game.CAT_PURPLE and not auto_travel and not Game.sandbox:  # (auto-travel asked once, up front)
-		ask("!!  WARNING  !!\n\n%s is a WILD system.\nPirates hold roughly 60%% of its planets, and you lose your cargo if you're destroyed.\nAnomalies hide in Wild space, though...\n\nJump anyway?" % d.name,
+		ask_wild("!!  WARNING  !!\n\n%s is a WILD system.\nPirates hold roughly 60%% of its planets, and you lose your cargo if you're destroyed.\nAnomalies hide in Wild space, though...\n\nJump anyway?" % d.name,
 			"Jump", _gate_jump.bind(dest))
 	else:
 		_gate_jump(dest)
@@ -2951,7 +3001,7 @@ func enter_wormhole() -> void:
 	if loc.wormhole < 0 or mode != "fly":
 		return
 	var other: Dictionary = Game.anomalies[loc.wormhole]
-	ask("The wormhole churns violently. It leads somewhere very far away, deep in WILD space, where pirates rule.\n\nGo through?",
+	ask_wild("The wormhole churns violently. It leads somewhere very far away, deep in WILD space, where pirates rule.\n\nGo through?",
 		"Enter", _wormhole_jump.bind(other.sys, other.loc))
 
 
@@ -2961,6 +3011,21 @@ func _wormhole_jump(sys_id: int, loc_i: int) -> void:
 	var heading: Vector2 = Game.systems[sys_id].pos - current_sys().pos
 	_travel_to("wormhole", Game.systems[sys_id].name, JUMP_CHARGE, WORMHOLE_TIME,
 		enter_location.bind(sys_id, loc_i, _arrival_spot(heading)), Color("d050ff"), heading)
+
+
+## The Wild space warnings: skipped altogether once "don't show this again" has been ticked (the ESC menu turns
+## them back on).
+func ask_wild(text: String, yes_text: String, on_yes: Callable) -> void:
+	if Game.skip_wild_warning:
+		on_yes.call()
+		return
+	var prev := mode
+	mode = "dialog"
+	confirm.ask(text, yes_text, _confirm_yes.bind(prev, on_yes), _confirm_no.bind(prev), "Don't show this warning again",
+		func(on: bool):
+			if on:
+				Game.skip_wild_warning = true
+				Sfx.save_settings())
 
 
 func ask(text: String, yes_text: String, on_yes: Callable) -> void:
@@ -3146,7 +3211,7 @@ func _respawn() -> void:
 	player.set_dead(false)
 	player.heal_full()
 	mode = "fly"
-	var home: Array = Game.home
-	enter_location(home[0], home[1])
-	Game.say("Your ship was rebuilt at %s." % current_loc().name, Color("9fd3ff"))
+	Game.home = [0, 0]  # a lost ship is always rebuilt at the Core's station, wherever it died
+	enter_location(0, 0)
+	Game.say("Your ship was rebuilt at the Core, at %s." % current_loc().name, Color("9fd3ff"))
 	Game.save_game()

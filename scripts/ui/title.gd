@@ -18,6 +18,7 @@ var _continue: Button
 var _slots: HBoxContainer  # pilot / sandbox save picker
 var _slot_btns := {}
 var _restart: Button
+var _save_code: Button  # (shown when there's a save to make a code from)
 var _help: PanelContainer
 var _help_text: RichTextLabel
 var _t := 0.0
@@ -51,6 +52,8 @@ func _ready() -> void:
 	_menu_button("New Game", _new_game, "ship")
 	_menu_button("Guide", _show_help.bind(UI.GUIDE), "star")
 	_menu_button("Controls", _show_help.bind(CONTROLS), "mission")
+	_save_code = _menu_button("Save Code", func(): main.code_panel.open_export(), "cargo")
+	_menu_button("Load Code", func(): main.code_panel.open_import(_after_code), "cargo")
 	_menu_button("Quit", func(): get_tree().quit(), "skull")
 
 	var hc := CenterContainer.new()
@@ -103,6 +106,14 @@ func _pick_slot(s: String) -> void:
 	for k in _slot_btns:
 		_slot_btns[k].set_pressed_no_signal(k == Game.save_slot)
 	_continue.visible = Game.has_save()
+	_save_code.visible = _continue.visible
+
+
+## A save code was loaded: Continue (and Save Code) show up if they hadn't.
+func _after_code() -> void:
+	Game.migrate_saves()
+	_continue.visible = Game.has_save()
+	_save_code.visible = _continue.visible
 
 
 func _new_game() -> void:

@@ -18,6 +18,10 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--aptest" in OS.get_cmdline_user_args():
+		_aptest()
+	elif "--jumptest" in OS.get_cmdline_user_args():
+		_jumptest()
 	elif "--bench" in OS.get_cmdline_user_args():
 		_bench()
 	elif "--gpu" in OS.get_cmdline_user_args():
@@ -156,6 +160,110 @@ func _gallery() -> void:
 	if sheet != null:
 		sheet.save_png(dir.path_join("ship_sheet.png"))
 		print("SHEET ship_sheet")
+	get_tree().quit()
+
+
+## `-- --autoshot --jumptest [--shots]`: a jump to another system: the jump map plays between the tunnel and the
+## arrival, and the camera (and the ship's heading) is exactly what it was. With --shots (in a window) it
+## also saves a few frames of the map.
+func _jumptest() -> void:
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	await _secs(1.5)
+	var to: int = Game.systems[0].links[0]
+	# swing the camera round a bit first, so a snap-back would show
+	main.cam_turn(0.9, -0.3)
+	await _secs(0.5)
+	main.admin_jump(to)
+	var phases := []
+	var cam_before := Basis()
+	var aim_before := Basis()
+	var shot_at := [0.5, 1.1, 1.8, 2.3]
+	var shot_i := 0
+	var t0 := Time.get_ticks_msec()
+	var chart_t0 := -1
+	while main.mode != "fly" or not main.travel.is_empty():
+		await get_tree().process_frame
+		var ph: String = main.travel.get("phase", "")
+		if ph != "" and (phases.is_empty() or phases[-1] != ph):
+			phases.append(ph)
+			if ph == "chart":
+				chart_t0 = Time.get_ticks_msec()
+				print("JUMPTEST jump map showing: %s" % main.jump_map.visible)
+		if ph == "chart":
+			cam_before = main.camera.global_basis
+			aim_before = main.aim
+			if "--shots" in OS.get_cmdline_user_args() and shot_i < shot_at.size() and \
+					(Time.get_ticks_msec() - chart_t0) / 1000.0 >= shot_at[shot_i]:
+				await _shot("jumpmap_%d" % shot_i)
+				shot_i += 1
+		if Time.get_ticks_msec() - t0 > 60000:
+			break
+	await _secs(0.3)
+	var cam_after: Basis = main.camera.global_basis
+	var cam_turn := rad_to_deg(Quaternion(cam_before.orthonormalized()).angle_to(Quaternion(cam_after.orthonormalized())))
+	var aim_turn := rad_to_deg(Quaternion(aim_before.orthonormalized()).angle_to(Quaternion(main.aim.orthonormalized())))
+	print("JUMPTEST phases %s, now in system %d (wanted %d)" % [str(phases), Game.current_system, to])
+	print("JUMPTEST camera turned %.2f deg and the aim %.2f deg across the arrival  %s" % [cam_turn, aim_turn,
+		"PASS" if cam_turn < 1.0 and aim_turn < 1.0 else "FAIL"])
+	print("JUMPTEST map gone afterwards: %s" % (not main.jump_map.visible))
+	get_tree().quit()
+
+
+## `-- --autoshot --aptest`: the autopilot has to keep flying with a menu open (it used to stall: it was only
+## updated in flight mode), and an arrival that comes while a menu's open waits for it to close.
+func _aptest() -> void:
+	await _secs(1.0)
+	main.start_new_game()
+	seed(1)
+	Game.god = true
+	Game.peaceful = true
+	await _secs(1.5)
+	var p = main.player
+	var rock: Dictionary = main.station_lm()  # (a station: the Core has no rocks by the start)
+	p.position = rock.pos + Vector3(0, 0, 9000)  # well away from it, so there is a long way to fly
+	main.aim = Basis.looking_at((rock.pos - p.position).normalized(), Vector3.UP)
+	p.basis = main.aim
+	p.stop()
+	main.select(rock)
+	main.order("approach")
+	var fails := 0
+	for step in [["inventory", "open_menu"], ["map", "open_menu"], ["fitting", "open_menu"]]:
+		if main.autopilot.is_empty():
+			main.select(rock)
+			main.order("approach")
+		var d0: float = p.position.distance_to(rock.pos)
+		var dir: String = step[0]
+		main.open_menu({"inventory": "inventory", "map": "galaxy", "fitting": "fitting"}[dir])
+		var mode0: String = main.mode
+		await _secs(2.0)
+		var d1: float = p.position.distance_to(rock.pos)
+		var ok: bool = d1 < d0 - 5.0 or main.autopilot.is_empty() or d0 < 400.0
+		print("APTEST %s open (mode %s): distance %.0f -> %.0f, autopilot %s  %s" % [dir, mode0, d0, d1,
+			"on" if not main.autopilot.is_empty() else "done", "PASS" if ok else "FAIL (stalled)"])
+		if not ok:
+			fails += 1
+		main.close_inventory()
+		main.close_fitting()
+		main.close_maps()
+	# arrive while a menu is open: it waits, then arrives once closed
+	Engine.time_scale = 6.0
+	main.select(rock)
+	main.order("approach")
+	main.open_menu("inventory")
+	var t0 := Time.get_ticks_msec()
+	while not main.autopilot.is_empty() and Time.get_ticks_msec() - t0 < 25000:
+		await get_tree().process_frame
+	var held: bool = not main.autopilot.is_empty()
+	main.close_inventory()
+	await _secs(0.5)
+	print("APTEST arrival with the menu open: held %s, finished after closing: %s  %s" % [held, main.autopilot.is_empty(),
+		"PASS" if main.autopilot.is_empty() else "FAIL"])
+	Engine.time_scale = 1.0
+	print("APTEST RESULT: %s" % ("all passed" if fails == 0 and main.autopilot.is_empty() else "FAILED"))
 	get_tree().quit()
 
 

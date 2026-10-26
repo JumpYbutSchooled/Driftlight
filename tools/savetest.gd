@@ -170,6 +170,68 @@ func _run() -> void:
 	check(G.away_smelted == G.furnace_output() and absf(G.away_time - 3600.0) < 5.0,
 		"reported: %d materials in %d s away" % [G.away_smelted, G.away_time])
 
+	print("-- relics come back a week after they're decoded")
+	var rl := [0, 0]
+	for s in G.systems:
+		for li in s.locs.size():
+			if rl[0] == 0 and s.id > 0 and s.locs[li].kind == "planet":
+				rl = [s.id, li]
+	G.new_game()
+	G.systems[rl[0]].locs[rl[1]].relic = true
+	G.mark_relic(rl[0], rl[1])
+	check(not G.systems[rl[0]].locs[rl[1]].relic, "decoded: the relic is gone")
+	G.mark_relic(rl[0], rl[1])
+	check(G.relics_done.size() == 1, "decoding it again doesn't add a second entry")
+	check(G.refresh_relics() == 0 and not G.systems[rl[0]].locs[rl[1]].relic, "it stays gone through the week")
+	G.relics_done[0][2] = Time.get_unix_time_from_system() - G.RELIC_RESPAWN + 3600.0
+	check(G.refresh_relics() == 0 and not G.systems[rl[0]].locs[rl[1]].relic, "an hour before the week is up: still gone")
+	G.relics_done[0][2] = Time.get_unix_time_from_system() - G.RELIC_RESPAWN - 60.0
+	check(G.refresh_relics() == 1 and G.systems[rl[0]].locs[rl[1]].relic and G.relics_done.is_empty(), "a week and a minute on: it's back")
+	var rs: Dictionary = G.systems[rl[0]]
+	G.mark_relic(rl[0], rl[1])
+	wipe()
+	G.in_game = true
+	G.save_game()  # (saved with the relic decoded just now)
+	G.new_game()
+	check(G.load_game() and not G.systems[rl[0]].locs[rl[1]].relic, "still gone after saving and loading")
+	var old_save: Dictionary = JSON.parse_string(text(main))
+	old_save.relics_done = [[rl[0], rl[1]]]  # (a save from before the weekly return: no time)
+	put(main, JSON.stringify(old_save))
+	check(G.load_game() and not G.systems[rl[0]].locs[rl[1]].relic and G.relics_done.size() == 1,
+		"an older save's relics get a fresh week")
+	G.in_game = false
+
+	print("-- save codes: carry a save to another device")
+	wipe()
+	put(main, good)
+	var code: String = G.save_code()
+	check(code.begins_with("DLSAVE1-") and code.length() > 200 and not code.contains(" ") and not code.contains("\n"),
+		"a code for the save: %d characters" % code.length())
+	wipe()  # (the other device: no save there)
+	check(not G.has_save(), "nothing saved on the other device")
+	check(G.import_code(code) == "", "the code loads")
+	check(text(main) == good and text(main + ".bak") == good, "the save is exactly the original")
+	check(G.load_game() and G.credits == 57730 and G.ship_id == "excavator", "and plays: %d credits, %s" % [G.credits, G.ship_id])
+	put(main, FileAccess.get_file_as_string(real))  # (an older pilot save sits there now)
+	var wrapped := ""
+	for i in range(0, code.length(), 60):
+		wrapped += code.substr(i, 60) + ("\n" if i % 120 == 0 else " ")
+	check(G.import_code("  " + wrapped + "\n") == "", "pasting with spaces and line breaks works too")
+	check(names("before_code").size() >= 1, "the save it replaced was kept in the backups folder")
+	check(G.import_code(code.substr(0, code.length() - 40)) != "", "a cut-off code is refused")
+	var flipped := code.substr(0, code.length() - 5) + ("A" if code[code.length() - 5] != "A" else "B") + code.substr(code.length() - 4)
+	check(G.import_code(flipped) != "", "a code with one character changed is refused")
+	check(G.import_code("hello") != "" and G.import_code("") != "", "rubbish is refused")
+	var old_json := JSON.stringify({"version": 1, "credits": 5})
+	var old_code := "DLSAVE1-%d-%s-%s" % [old_json.length(), "x", "y"]
+	check(G.import_code(old_code) != "", "a made-up code is refused")
+	var newer2: Dictionary = JSON.parse_string(good)
+	newer2["game"] = 99
+	put(main, JSON.stringify(newer2))
+	var newer_code: String = G.save_code()
+	wipe()
+	check(G.import_code(newer_code).contains("newer version"), "a save from a newer game version is refused")
+
 	print("-- a fresh install")
 	wipe()
 	G.migrate_saves()

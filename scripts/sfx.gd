@@ -193,6 +193,7 @@ func save_settings() -> void:
 	for k in volumes:
 		cfg.set_value("audio", k, volumes[k])
 	cfg.set_value("controls", "swap_ws", Game.swap_ws)
+	cfg.set_value("game", "skip_wild_warning", Game.skip_wild_warning)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -202,6 +203,7 @@ func _load_settings() -> void:
 		for k in volumes:
 			volumes[k] = cfg.get_value("audio", k, volumes[k])
 		Game.set_swap_ws(bool(cfg.get_value("controls", "swap_ws", true)))
+		Game.skip_wild_warning = bool(cfg.get_value("game", "skip_wild_warning", false))
 	for k in volumes:
 		set_volume(k, volumes[k])
 

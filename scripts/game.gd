@@ -538,7 +538,7 @@ var unlocked := {}  # achievement id -> true
 var missions := []  # accepted missions
 var boards := {}  # "sys:loc" -> missions offered at that station
 var salvaged := []  # [sys, loc] pairs whose wreck has been looted
-var relics_done := []  # [sys, loc] pairs whose relic has been decoded
+var relics_done := []  # [sys, loc, unix time] of each relic decoded in the last week (see refresh_relics)
 # station furnaces: "sys:loc" -> {name, queue: [[ore, quality, count]], progress (s into the current piece), output: {ore: n}}
 var refineries := {}
 var notebook := {}  # "sys:loc" -> {"sys", "loc", "tags": [...], "ores": [...]}: every place worth remembering
@@ -546,7 +546,7 @@ var pinned := []  # [kind, id] recipes shown on the HUD
 var route_stops := []  # further stops after route_target, in order
 var regions_seen := {}  # region index -> true
 var regional_seen := {}  # regional ore id -> true
-var home := [0, 0]  # [system, location] of the station you last docked at: where a lost ship is rebuilt
+var home := [0, 0]  # [system, location] where a lost ship is rebuilt: always the Core's station (main._respawn)
 # Station storage: one store shared by every station. What's in it is safe; everything carried in the ship
 # (cargo, materials, spices, spare weapons and modules, probes, portable wormholes) is lost with the ship.
 var storage := {"materials": {}, "spices": {}, "weapons": {}, "modules": {}, "cargo": {}, "probes": 0, "portals": 0}  # "materials" / "spices" / "weapons" / "modules": {id: n}, "cargo": {"ore:q": n}, "probes": n, "portals": n
@@ -569,6 +569,7 @@ var peaceful := false  # sandbox: no pirates
 var reset_note := false  # old saves were set aside this run (v8 started everyone over)
 var away_time := 0.0  # how long the game was closed before this save was loaded
 var away_smelted := 0  # materials the furnaces made in that time
+var skip_wild_warning := false  # "don't show this again" was ticked on the Wild space warnings (settings.cfg)
 var swap_ws := true  # W dips the nose and S lifts it (a setting in the ESC menu, saved in settings.cfg)
 var _portable_rate := 0.0  # Portable Refinery: ore per minute
 var _portable_t := 0.0
@@ -2137,10 +2138,29 @@ func mark_salvaged(sys_id: int, loc_i: int) -> void:
 		salvaged.append([sys_id, loc_i])
 
 
-func mark_relic(sys_id: int, loc_i: int) -> void:
+const RELIC_RESPAWN := 7 * 24 * 3600  # a decoded relic comes back after this many real seconds (a week)
+
+
+## A relic was decoded (`when`: the unix time it was, now by default): it's gone for a week.
+func mark_relic(sys_id: int, loc_i: int, when := -1.0) -> void:
 	systems[sys_id].locs[loc_i].relic = false
-	if not relics_done.has([sys_id, loc_i]):
-		relics_done.append([sys_id, loc_i])
+	for r in relics_done:
+		if r[0] == sys_id and r[1] == loc_i:
+			return
+	relics_done.append([sys_id, loc_i, Time.get_unix_time_from_system() if when < 0.0 else when])
+
+
+## Bring back the relics that were decoded a week or more ago. Returns how many came back.
+func refresh_relics() -> int:
+	var now := Time.get_unix_time_from_system()
+	var back := 0
+	for i in range(relics_done.size() - 1, -1, -1):
+		var r: Array = relics_done[i]
+		if now - float(r[2]) >= RELIC_RESPAWN:
+			systems[int(r[0])].locs[int(r[1])].relic = true
+			relics_done.remove_at(i)
+			back += 1
+	return back
 
 
 ## Loot from a derelict wreck. Returns a description.
@@ -2547,6 +2567,55 @@ func has_save() -> bool:
 	return FileAccess.file_exists(save_path) or FileAccess.file_exists(save_path + ".bak") or _pick_save(save_path) != null
 
 
+const CODE_TAG := "DLSAVE1"
+
+## The current slot's save as a code you can paste on another device (Load Code there): the save file
+## compressed and written as plain text, "DLSAVE1-<size>-<check>-<data>". It holds the whole save, so it's a
+## few thousand characters, not a short password. Returns "" if there's no save.
+func save_code() -> String:
+	save_game()
+	var src := save_path if FileAccess.file_exists(save_path) else save_path + ".bak"
+	if not FileAccess.file_exists(src):
+		return ""
+	var raw := FileAccess.get_file_as_bytes(src)
+	if raw.is_empty():
+		return ""
+	var b64 := Marshalls.raw_to_base64(raw.compress(FileAccess.COMPRESSION_DEFLATE)).replace("+", "-").replace("/", "_")
+	return "%s-%d-%s-%s" % [CODE_TAG, raw.size(), b64.sha256_text().substr(0, 8), b64]
+
+
+## Turn a pasted code back into this slot's save (the save it replaces is kept in the backups folder). Returns
+## "" when it worked, otherwise what was wrong with the code. Continue then loads it.
+func import_code(code: String) -> String:
+	var parts := code.strip_edges().replace("\n", "").replace("\r", "").replace(" ", "").split("-", true, 3)
+	if parts.size() < 4 or parts[0] != CODE_TAG:
+		return "That doesn't look like a Driftlight save code."
+	var size := int(parts[1])
+	var b64: String = parts[3]
+	if b64.sha256_text().substr(0, 8) != parts[2]:
+		return "The code is damaged or incomplete (it didn't match its check). Copy all of it and try again."
+	var packed := Marshalls.base64_to_raw(b64.replace("-", "+").replace("_", "/"))
+	var raw := packed.decompress(size, FileAccess.COMPRESSION_DEFLATE) if size > 0 and size < 4000000 else PackedByteArray()
+	if raw.is_empty():
+		return "The code couldn't be unpacked."
+	var data = JSON.parse_string(raw.get_string_from_utf8())
+	if typeof(data) != TYPE_DICTIONARY or not data.has("credits"):
+		return "The code doesn't hold a Driftlight save."
+	if int(data.get("version", 1)) < SAVE_VERSION:
+		return "That save is from before the v8 reset, and can't be played any more."
+	if int(data.get("game", 0)) > VERSION:
+		return "That save was made by a newer version of Driftlight (v%d). Update the game first." % int(data.game)
+	if FileAccess.file_exists(save_path):
+		_keep_copy(save_path, save_path, "before_code")
+	for p in [save_path, save_path + ".bak"]:
+		var f := FileAccess.open(p, FileAccess.WRITE)
+		if f == null:
+			return "Couldn't write the save."
+		f.store_buffer(raw)
+		f.close()
+	return ""
+
+
 ## Closing the game or going back to the title: save, and back up where you left off.
 func end_session() -> void:
 	save_game()
@@ -2660,8 +2729,10 @@ func load_game() -> bool:
 		anom_loc(int(aid)).found = true
 	for pair in data.get("salvaged", []):
 		mark_salvaged(int(pair[0]), int(pair[1]))
+	# (saves from before the weekly return have no time on a relic: its week starts now)
 	for pair in data.get("relics_done", []):
-		mark_relic(int(pair[0]), int(pair[1]))
+		mark_relic(int(pair[0]), int(pair[1]), float(pair[2]) if pair.size() > 2 else -1.0)
+	refresh_relics()
 	notebook = {}
 	var nb: Dictionary = data.get("notebook", {})
 	for key in nb:
