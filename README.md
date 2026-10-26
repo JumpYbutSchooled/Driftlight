@@ -27,8 +27,6 @@ itself; an old copy can still write over your save, but v7 and later recover it 
 
 - Everything bought with credits (ready-made gear, probes, raw ore) costs **50 times** what it did.
 - Building ships, weapons and modules takes **4 times** the materials.
-- Better ore still smelts into more materials, but far less than before: Inferior 1, Normal 2, Superior 3,
-  Pristine 5 (it was 1, 3, 5 and 25).
 - Furnaces smelt at half the speed they did in v5-v7, and keep smelting while the game is closed (for up to a
   week). When you come back the game tells you how much was made.
 

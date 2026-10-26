@@ -258,7 +258,7 @@ func _build_refinery() -> void:
 	_furnace_key = "%d:%d" % [Game.current_system, loc_index]
 	Game.refinery(_furnace_key, loc.name)
 	_section("FURNACE", "flame")
-	_note("Load raw ore and the furnace smelts it one piece at a time: about half a second for Inferior up to 2 for Pristine, a little longer for rarer ores. It keeps going while you fly off (even with the game closed), and finished materials go into station storage the next time you dock here.   Yield per piece:  [color=#8d8d8d]Inferior 1[/color]   [color=#f0f0f0]Normal 3[/color]   [color=#ffd24a]Superior 5[/color]   [color=#74f7ff]Pristine 25[/color]")
+	_note("Load raw ore and the furnace smelts it one piece at a time: about a second for Inferior up to 4 for Pristine, a little longer for rarer ores. It keeps going while you fly off (even with the game closed), and finished materials go into station storage the next time you dock here.   Yield per piece:  [color=#8d8d8d]Inferior 1[/color]   [color=#f0f0f0]Normal 3[/color]   [color=#ffd24a]Superior 5[/color]   [color=#74f7ff]Pristine 25[/color]")
 	var card := UI.card("flame", Color("ff9a3d"), "Smelting", "", Color("ff9a3d"))
 	_smelt_label = UI.lbl("", 18)
 	card.text.add_child(_smelt_label)

@@ -88,7 +88,7 @@ static func q_tag(q: int, short := false) -> String:
 	if q == Q_NORMAL:
 		return ""
 	return Q_NAMES[q].substr(0, 3) if short else Q_NAMES[q]
-const Q_YIELD := [1, 2, 3, 5]  # materials smelted from one piece of ore, by quality (1, 3, 5, 25 before v8)
+const Q_YIELD := [1, 3, 5, 25]  # materials smelted from one piece of ore, by quality
 const Q_COLORS := [Color("8d8d8d"), Color("f0f0f0"), Color("ffd24a"), Color("74f7ff")]
 # ore quality odds by system category; Pristine ore is only ever found in the anomalies of Wild space
 const Q_WEIGHTS := [[97, 3, 0, 0], [58, 35, 7, 0], [0, 74, 26, 0], [0, 55, 45, 0]]
