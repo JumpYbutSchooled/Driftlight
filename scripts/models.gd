@@ -61,7 +61,7 @@ func ship(id: String) -> Node3D:
 	play_anims(n)
 	var k := scale_of(id)
 	n.scale = Vector3.ONE * k
-	_detail(n, k, 1.6, 1.0, true)
+	_detail(n, k)
 	return n
 
 
@@ -83,16 +83,14 @@ func prop(prop_name: String) -> Node3D:
 	play_anims(n)
 	var k: float = PROP_SCALE.get(prop_name, 1.0)
 	n.scale = Vector3.ONE * k
-	var turret := prop_name.begins_with("turret")
-	_detail(n, k, PROP_PANEL.get(prop_name, 1.6 * k), 1.0 if turret else 0.45, turret)
+	_detail(n, k, PROP_PANEL.get(prop_name, 1.6 * k), 1.0 if prop_name.begins_with("turret") else 0.45)
 	return n
 
 
 ## Gives every plain painted surface in a model the hull detail shader (see-through surfaces keep their
 ## imported material; glowing ones too, dimmed by `glow` - lamps and windows that look right on a ship
-## are too much spread over a whole station). `sleek`: ships and their turrets are smooth painted hulls, not
-## plated (see the shader).
-func _detail(node: Node, scale_k := 1.0, panel := 1.6, glow := 1.0, sleek := false) -> void:
+## are too much spread over a whole station).
+func _detail(node: Node, scale_k := 1.0, panel := 1.6, glow := 1.0) -> void:
 	var stack := [node]
 	while not stack.is_empty():
 		var n: Node = stack.pop_back()
@@ -113,10 +111,9 @@ func _detail(node: Node, scale_k := 1.0, panel := 1.6, glow := 1.0, sleek := fal
 						_detailed[gkey] = dim
 					mi.set_surface_override_material(i, _detailed[gkey])
 				continue
-			var key := [m, panel, sleek]
+			var key := [m, panel]
 			if not _detailed.has(key):
 				var sm := ShaderMaterial.new()
-				sm.set_shader_parameter("sleek", 1.0 if sleek else 0.0)
 				# open tubes (engine bells) are seen from inside too; everything else is closed and one-sided
 				sm.shader = HULL_2S if String(m.resource_name).contains("engine_bell") else HULL_SHADER
 				sm.set_shader_parameter("albedo", m.albedo_color)
