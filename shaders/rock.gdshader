@@ -44,6 +44,24 @@ float cracks(vec3 p) {
 	return sqrt(d2) - sqrt(d1);
 }
 
+// Distance to the nearest point of a 3D Voronoi pattern: bowls round scattered points (impact pits).
+float pits(vec3 p) {
+	vec3 cell = floor(p);
+	vec3 f = fract(p);
+	float d1 = 8.0;
+	for (int x = -1; x <= 1; x++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int z = -1; z <= 1; z++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 c = cell + o;
+				vec3 pt = o + vec3(hash3(c + 3.1), hash3(c + 41.3), hash3(c + 77.9)) - f;
+				d1 = min(d1, dot(pt, pt));
+			}
+		}
+	}
+	return sqrt(d1);
+}
+
 void fragment() {
 	vec3 m = objpos * size;  // metres
 	float n = fbm3(objpos * 2.4 + offset);
@@ -62,8 +80,14 @@ void fragment() {
 	ALBEDO = mix(rock, ore_color * mix(0.45, 0.8, big), ore);
 	ROUGHNESS = mix(0.97, 0.3, ore);
 	METALLIC = ore * 0.5;
-	// craggy surface: bump-map a height made of metre-scale noise (screen-space derivative method)
-	float h = fbm3(m * 0.12 + offset) * 2.5 + noise3(m * 0.8) * 0.35;
+	// craggy surface: bump-map a height field (screen-space derivative method) of metre-scale noise, sharp
+	// ridges, pits and impact craters with raised rims, and fine grit - the fine layers fading out with distance
+	float lod = clamp(length(VERTEX) / max(size, 1.0) * 0.02, 0.0, 1.0);
+	float ridge = 1.0 - abs(noise3(m * 0.05 + offset) * 2.0 - 1.0);
+	float d1 = pits(objpos * 5.0 + offset);
+	float crater = -(1.0 - smoothstep(0.0, 0.42, d1)) * 1.1 + smoothstep(0.34, 0.44, d1) * (1.0 - smoothstep(0.44, 0.56, d1)) * 0.5;
+	float h = fbm3(m * 0.12 + offset) * 2.5 + ridge * ridge * 1.6 + crater * (1.5 + size * 0.04)
+		+ (noise3(m * 0.8) * 0.35 + noise3(m * 3.0) * 0.12) * (1.0 - lod);
 	vec3 dpx = dFdx(VERTEX);
 	vec3 dpy = dFdy(VERTEX);
 	float hx = dFdx(h);

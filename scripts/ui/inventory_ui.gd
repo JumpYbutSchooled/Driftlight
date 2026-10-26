@@ -125,9 +125,11 @@ func _side_text() -> String:
 	s += "[color=#ffd24a]%d credits[/color]\n\n" % Game.credits
 	s += head % "MATERIALS"
 	for o in Game.ORE_ORDER:
-		var n := Game.have(o)
-		if n > 0 or not Game.ORES[o].has("region"):
-			s += "[color=%s]%s[/color]  %s\n" % [UI.hex(Game.ORES[o].color), Game.ORES[o].name, str(n) if n > 0 else "[color=#4c5672]0[/color]"]
+		var n := Game.carried(o)
+		var st := Game.stored(o)
+		if n > 0 or st > 0 or not Game.ORES[o].has("region"):
+			s += "[color=%s]%s[/color]  %s%s\n" % [UI.hex(Game.ORES[o].color), Game.ORES[o].name, str(n) if n > 0 else "[color=#4c5672]0[/color]",
+				"  [color=#8590a0](+%d stored)[/color]" % st if st > 0 else ""]
 	s += "\n" + head % "SPICES"
 	for id in Game.SPICE_ORDER:
 		s += "[color=%s]%s[/color]  %d\n" % [UI.hex(Game.SPICES[id].color), Game.SPICES[id].name, Game.have(id)]
@@ -213,17 +215,19 @@ func _build_ship() -> void:
 	for id in Game.modules_equipped:
 		_add(UI.module_card(id))
 	for id in Game.MODULE_ORDER:
-		if Game.module_stock.get(id, 0) > 0:
-			_add(UI.module_card(id, "%s  x%d  (in storage)" % [Game.MODULES[id].name, Game.module_stock[id]]))
+		if Game.module_stock.get(id, 0) + Game.storage.modules.get(id, 0) > 0:
+			_add(UI.module_card(id, "%s   %d carried, %d in station storage" % [Game.MODULES[id].name, Game.module_stock.get(id, 0),
+				Game.storage.modules.get(id, 0)]))
 	_section("HANGAR   %d / %d ships" % [Game.owned_ships.size(), Game.SHIPS.size()], "station")
 	var ships := ", ".join(Game.owned_ships.map(func(id): return Game.SHIPS[id].name))
 	var spare := []
 	for id in Game.WEAPON_ORDER:
-		if Game.weapon_stock.get(id, 0) > 0:
-			spare.append("%s x%d" % [Game.WEAPONS[id].name, Game.weapon_stock[id]])
+		var nw: int = Game.weapon_stock.get(id, 0) + Game.storage.weapons.get(id, 0)
+		if nw > 0:
+			spare.append("%s x%d" % [Game.WEAPONS[id].name, nw])
 	var guns := ", ".join(spare) if not spare.is_empty() else "none - build weapons at a station"
 	_add(UI.card("", Color.WHITE, "Owned ships", ships))
-	_add(UI.card("", Color.WHITE, "Spare weapons in storage", guns))
+	_add(UI.card("", Color.WHITE, "Spare weapons (carried and in station storage)", guns))
 	if not Game.blessings.is_empty():
 		_section("BLESSINGS", "obelisk")
 		for b in Game.blessings:

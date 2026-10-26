@@ -16,6 +16,7 @@ import random
 import sys
 
 from mathutils import Euler, Vector
+from mathutils.bvhtree import BVHTree
 
 sys.path.append(os.path.dirname(__file__))
 from common import *  # noqa: E402,F401,F403
@@ -68,6 +69,68 @@ FACES = {
     "right": (Vector((1, 0, 0)), (0.0, math.pi / 2, 0.0)),
     "left": (Vector((-1, 0, 0)), (0.0, -math.pi / 2, 0.0)),
 }
+
+
+def turret_blocked(bvh, pa, n, s):
+    """Would a turret on a mount at pa (facing n, size s) have its housing inside (or touching) the hull? Its
+    housing and barrels fill a column above the mount and a ring round it."""
+    u = n.orthogonal().normalized()
+    v = n.cross(u)
+    for h in (0.3, 0.55):
+        pts = [pa + n * h * s]
+        for a in range(8):
+            ang = a * math.pi / 4
+            pts.append(pa + n * h * s + (u * math.cos(ang) + v * math.sin(ang)) * 0.45 * s)
+        for p in pts:
+            loc, normal, _i, dist = bvh.find_nearest(p)
+            if loc is not None and (dist < 0.03 * s or enclosed(bvh, p, s * 40.0)):
+                if DEBUG_MOUNTS:
+                    print("  blocked at h %.2f: point %s nearest %s normal %s dist %.3f" % (h, tuple(round(c, 2) for c in p),
+                                                                                        tuple(round(c, 2) for c in loc), tuple(round(c, 2) for c in normal), dist))
+                return True
+    return False
+
+
+DEBUG_MOUNTS = os.environ.get("DL_DEBUG_MOUNTS", "") != ""
+AXES = [Vector(d) for d in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))]
+
+
+def enclosed(bvh, p, reach):
+    """Is p inside the hull? Only if a ray out of it hits the hull whichever way it goes (the nearest face's
+    normal can't tell inside from out near an edge)."""
+    return all(bvh.ray_cast(p, d, reach)[0] is not None for d in AXES)
+
+
+def audit(k, mesh_obj):
+    """Print AUDIT lines for anything that clashes on a finished ship: engine housings touching, an engine's
+    exhaust running into the hull, turrets on top of each other or of an engine. Returns the turrets whose
+    housings would sit inside other parts of the hull (see Kit.raise_mount)."""
+    me = mesh_obj.data
+    mw = mesh_obj.matrix_world
+    bvh = BVHTree.FromPolygons([mw @ v.co for v in me.vertices], [tuple(p.vertices) for p in me.polygons])
+    eng = k.engines
+    for i in range(len(eng)):
+        for j in range(i + 1, len(eng)):
+            (pa, ra), (pb, rb) = eng[i], eng[j]
+            if (pa - pb).length < (ra + rb) * 1.4:
+                print("AUDIT %s: engines %d and %d overlap" % (k.sid, i, j))
+        p, r = eng[i]
+        hit = bvh.ray_cast(p + Vector((0, -r * 0.3, 0)), Vector((0, -1, 0)), r * 5.0)
+        if hit[0] is not None:
+            print("AUDIT %s: engine %d exhaust runs into the hull" % (k.sid, i))
+    buried = []
+    for i, (pa, rot, sa) in enumerate(k.mounts):
+        n = Euler(rot).to_matrix() @ Vector((0, 0, 1))
+        for j in range(i + 1, len(k.mounts)):
+            pb, _r, sb = k.mounts[j]
+            if (pa - pb).length < (sa + sb) * 0.72:
+                print("AUDIT %s: turrets %d and %d overlap" % (k.sid, i, j))
+        for (pe, re) in eng:
+            if (pa - pe).length < sa * 0.6 + re * 1.5:
+                print("AUDIT %s: turret %d sits on engine" % (k.sid, i))
+        if turret_blocked(bvh, pa, n, sa):
+            buried.append(i)
+    return buried
 
 
 def side(sx):
@@ -220,6 +283,33 @@ class Kit:
         self.engines.append((Vector((x, y - nlen + 0.1, z)), r))
         self.grow((x, y - nlen / 2, z), (r * 1.4, nlen / 2, r * 1.4))
 
+    def near_mount(self, p, r):
+        """Is a part of radius r at p in the way of a turret mount (where the turret sits and swings)?"""
+        return any((Vector(p) - m).length < r + s * 0.75 for m, _rot, s in self.mounts)
+
+    def raise_mount(self, i, mesh_obj):
+        """A turret whose housing would sit inside other parts of the hull goes up on a pedestal, out along its
+        mount's normal, until it's clear."""
+        p, rot, s = self.mounts[i]
+        n = Euler(rot).to_matrix() @ Vector((0, 0, 1))
+        me = mesh_obj.data
+        mw = mesh_obj.matrix_world
+        bvh = BVHTree.FromPolygons([mw @ v.co for v in me.vertices], [tuple(q.vertices) for q in me.polygons])
+        lift = 0.0
+        for step in range(1, 7):
+            lift = step * 0.25 * s
+            if not turret_blocked(bvh, p + n * lift, n, s):
+                break
+        else:
+            print("AUDIT %s: turret %d is boxed in - left where it is" % (self.sid, i))
+            return
+        top = p + n * lift
+        cyl("pedestal", 0.42 * s, lift + 0.2 * s, tuple(p + n * (lift / 2 - 0.1 * s)), self.hull2, rot=rot, parent=self.r, segs=16)
+        cyl("pedestal_collar", 0.5 * s, 0.08 * s, tuple(top - n * 0.06 * s), self.acc2, rot=rot, parent=self.r, segs=16)
+        self.mounts[i] = (top, rot, s)
+        self.grow(top + n * 0.5 * s, (1.1 * s, 1.5 * s, 1.1 * s))
+        print("AUDIT %s: turret %d raised %.2f m onto a pedestal" % (self.sid, i, lift))
+
     def cockpit(self, on, y, w, l, h, x=0.0):
         """A raised cockpit on top of part `on`: plated, with a raked windscreen and a glass roof panel."""
         base = on.top(y)
@@ -303,6 +393,8 @@ class Kit:
         mesh_obj = next(o for o in self.body.children if o.type == "MESH")
         mesh_obj.parent = self.r
         bpy.data.objects.remove(self.body)
+        for i in audit(self, mesh_obj):
+            self.raise_mount(i, mesh_obj)
         for i, (p, rot, s) in enumerate(self.mounts):
             e = empty("Gun_%d" % i, tuple(p), self.r)
             e.rotation_euler = rot
@@ -394,7 +486,7 @@ def d_prospector(k):
     top = hb.top(-0.6)
     for sx in (-1, 1):
         k.part("hopper_wall", 0.35, 3.6, 1.1, x=sx * 2.2, y=-0.6, z=top + 0.5, mats=k.A)
-        k.part("hopper_wall", 4.75, 0.35, 1.1, y=-0.6 + sx * 1.8, z=top + 0.5, mats=k.A)
+        k.part("hopper_wall", 4.75, 0.35, 1.04, y=-0.6 + sx * 1.8, z=top + 0.47, mats=k.A)
     rock = mat("ore_rock", "4a4038", 0.1, 0.9)
     for i in range(9):
         ico("ore", k.rng.uniform(0.35, 0.6), (k.rng.uniform(-1.6, 1.6), -0.6 + k.rng.uniform(-1.3, 1.3), top + 0.35), rock, 1,
@@ -478,8 +570,8 @@ def d_lancer(k):
                 parent=k.body)
             k.grow((sx * 2.2, -1.4, sz * 0.9), (0.9, 1.3, 0.6))
     k.cockpit(sp, 2.2, 1.0, 1.4, 0.5)
-    for x, z in ((0.0, 0.42), (-0.42, -0.3), (0.42, -0.3)):
-        k.engine(x, sp.back() - 0.05, z, 0.36, fins=False)
+    for x, z in ((0.0, 0.4), (-0.44, -0.35), (0.44, -0.35)):
+        k.engine(x, sp.back() - 0.05, z, 0.3, fins=False)
     k.mount(0, -1.4, mid.top(-1.4), "top", 0.85)
     k.mount(0, 1.6, sp.bottom(1.6), "bottom", 0.8)
     k.lights(1.45, -1.4, 0.0, 0.08)
@@ -534,7 +626,7 @@ def d_bastion(k):
         k.mount(pod.x, pod.y + 0.3, pod.top(pod.y), "top", 1.0)
     k.mount(0, -1.3, cit.top(-1.3), "top", 1.15)
     k.mount(0, 0.8, hb.bottom(0.8), "bottom", 1.15)
-    for x in (-1.6, 0.0, 1.6):
+    for x in (-1.85, 0.0, 1.85):
         k.engine(x, hb.back() - 0.05, -0.1, 0.62)
     k.lights(5.8, 1.6, 0.4, 0.11)
     k.beacon(0, cit.y + 0.9, cit.top(cit.y) + 0.12, 0.11)
@@ -552,7 +644,7 @@ def d_specter(k):
     hump = k.part("hump", 1.6, 2.6, 0.5, y=-0.4, z=body.top(-0.4) + 0.12, taper=(0.5, 0.4))
     box("canopy", (0.8, 1.2, 0.2), (0, 1.4, body.top(1.4) + 0.05), k.glass, 0.02, taper=(0.4, 0.5), parent=k.body)
     for x in (-0.65, 0.65):
-        k.engine(x, -1.7, -0.1, 0.26, fins=False)
+        k.engine(x, body.back(), -0.1, 0.26, fins=False)  # out behind the wing's trailing edge
     k.mount(0, -1.25, hump.top(-1.25) - 0.05, "top", 0.68)
     k.mount(0, -0.4, body.bottom(-0.4), "bottom", 0.68)
     k.lights(4.2, -1.6, -0.1, 0.06)
@@ -582,7 +674,7 @@ def d_nyx(k):
     spin(ring, "Y", 600)
     k.grow((0, -0.9, 0), (3.8, 0.5, 3.8))
     for x in (-0.6, 0.6):
-        k.engine(x, hb.back() - 0.05, 0, 0.45)
+        k.engine(x, hb.back() - 0.05, 0, 0.4)
     k.mount(0, 0.6, hb.top(0.6), "top", 0.75)
     k.mount(0, -3.0, hb.bottom(-3.0), "bottom", 0.75)
     k.lights(1.15, 0.8, 0.0, 0.08)
@@ -654,8 +746,8 @@ def d_halberd(k):
     k.mast(0.5, -4.4, br.top(-4.4), 3.2, 0.14)
     k.radar(-0.6, -4.3, br.top(-4.3), 1.2)
     k.portholes(hb, -1.0, 0.2, 14.0, 2, 0.5)
-    for x in (-1.9, 0.0, 1.9):
-        k.engine(x, hb.back() - 0.05, 0, 1.0)
+    for x in (-2.35, 0.0, 2.35):
+        k.engine(x, hb.back() - 0.05, 0, 0.8)
     k.mount(0, 5.5, hb.top(5.5), "top", 1.4)
     k.mount(0, -9.6, hb.top(-9.6), "top", 1.35)
     k.mount(0, 3.0, hb.bottom(3.0), "bottom", 1.3)
@@ -681,8 +773,8 @@ def d_monarch(k):
         k.mount(sp.side_x(sx, 2.0), 2.0, 0, side(sx), 1.45)
     k.portholes(hb, -2.0, 0.4, 20.0, 3, 0.55)
     k.portholes(t1, -3.0, t1.z, 10.0, 2, 0.5)
-    for x in (-3.0, -1.0, 1.0, 3.0):
-        k.engine(x, hb.back() - 0.05, 0, 1.05)
+    for x in (-3.7, -1.23, 1.23, 3.7):
+        k.engine(x, hb.back() - 0.05, 0, 0.85)
     k.mount(0, 9.0, hb.top(9.0), "top", 1.6)
     k.mount(0, 3.0, t1.top(3.0), "top", 1.55)
     k.mount(0, 7.0, hb.bottom(7.0), "bottom", 1.5)
@@ -712,8 +804,8 @@ def d_behemoth(k):
     k.portholes(hb, -2.0, 0.6, 26.0, 3, 0.6)
     for sx in (-1, 1):
         k.mount(sx * (hb.hw(-2.0) + 1.15), -2.0, 0, side(sx), 1.7)
-    for x in (-4.0, -2.0, 0.0, 2.0, 4.0):
-        k.engine(x, hb.back() - 0.05, 0, 1.2)
+    for x in (-5.3, -2.65, 0.0, 2.65, 5.3):
+        k.engine(x, hb.back() - 0.05, 0, 0.9)
     k.mount(0, 12.0, hb.top(12.0), "top", 2.0)
     k.mount(0, 1.0, t1.top(1.0), "top", 1.9)
     k.mount(0, -15.5, hb.top(-15.5), "top", 1.9)
@@ -756,7 +848,7 @@ def d_ark(k):
             k.mount(sp.side_x(sx, y), y, 0, side(sx), 1.8)
     k.mount(0, 12.0, hb.bottom(12.0), "bottom", 1.8)
     k.mount(0, -10.0, hb.bottom(-10.0), "bottom", 1.8)
-    for x in (-6.0, -2.2, 2.2, 6.0):
+    for x in (-6.3, -2.1, 2.1, 6.3):
         k.engine(x, hb.back() - 0.05, -0.3, 1.45)
 
     k.lights(8.0, -12.0, 1.6, 0.2)
@@ -785,8 +877,8 @@ def d_titan(k):
         k.portholes(oh, -8.0, 0.6, 14.0, 2, 0.6)
     k.portholes(hb, -4.0, 0.8, 30.0, 3, 0.65)
     k.portholes(cit, -8.0, cit.z, 9.0, 2, 0.55)
-    for x in (-3.6, -1.2, 1.2, 3.6):
-        k.engine(x, hb.back() - 0.05, 0, 1.4)
+    for x in (-5.2, -1.74, 1.74, 5.2):
+        k.engine(x, hb.back() - 0.05, 0, 1.2)
     k.mount(0, 14.0, ridge.top(14.0), "top", 2.2)
     k.mount(0, 6.0, ridge.top(6.0), "top", 2.2)
     k.mount(0, -4.0, cit.top(-4.0), "top", 2.1)
@@ -859,18 +951,25 @@ FLEET = {
 
 
 def engines(k, part, n, r, z=None, y=None):
-    """n nozzles across the back of `part` (two rows when one won't fit)."""
+    """n nozzles across the back of `part`, in as many rows as fit, never touching: each housing (with its heat
+    fins) is about 3 nozzle radii across, so they sit at least that far apart - smaller, if that's what fits."""
     y = part.back() - 0.05 if y is None else y
     z = part.z if z is None else z
-    width = max(0.0, part.hw(part.back()) * 2.0 * 0.9 - r * 2.6)
-    rows = 1 if n <= 4 or width >= (n - 1) * r * 2.6 else 2
+    avail_w = part.hw(part.back()) * 2.0 * 0.95
+    avail_h = part.hh(part.back()) * 2.0 * 0.95
+    pitch = r * 3.15
+    rows = 1
+    while rows < n and math.ceil(n / rows) * pitch > avail_w + pitch * 0.4 and (rows + 1) * pitch <= avail_h + pitch * 0.6:
+        rows += 1
     per = math.ceil(n / rows)
+    if per * pitch > avail_w + pitch * 0.4:  # still too wide: smaller nozzles
+        r *= (avail_w + pitch * 0.4) / (per * pitch)
+        pitch = r * 3.15
     for row in range(rows):
         m = per if row < rows - 1 else n - per * (rows - 1)
-        zz = z + (0.0 if rows == 1 else (row - 0.5) * r * 2.7)
-        span = min(width, (m - 1) * r * 2.7)
+        zz = z + (row - (rows - 1) / 2) * pitch
         for i in range(m):
-            x = 0.0 if m == 1 else -span / 2 + span * i / (m - 1)
+            x = (i - (m - 1) / 2) * pitch
             k.engine(x, y, zz, r)
 
 
@@ -968,7 +1067,7 @@ def g_wedge(k, L, W, H, ne, er, guns, s, ex):
             k.plate("canard", [(sx * W * 0.08, L * 0.3), (sx * W * 0.3, L * 0.18), (sx * W * 0.3, L * 0.12), (sx * W * 0.08, L * 0.18)],
                     t * 0.7, H * 0.1, mat_=k.acc)
         elif v == 2:  # twin outer hulls riding along the wing
-            side = k.part("side_hull", W * 0.12, L * 0.62, H * 0.75, x=sx * W * 0.33, y=-L * 0.16, taper=(0.4, 0.6), mats=k.A,
+            side = k.part("side_hull", W * 0.12, L * 0.62, H * 0.75, x=sx * W * 0.4, y=-L * 0.16, taper=(0.4, 0.6), mats=k.A,
                           chamfer=H * 0.1)
             k.engine(side.x, side.back() - 0.05, 0, er * 0.8)
         elif v == 4:  # a sawtooth trailing edge, all angles
@@ -1127,7 +1226,8 @@ def g_miner(k, L, W, H, ne, er, guns, s, ex):
     if v in (0, 2):  # an open ore hopper on the deck
         for sx in (-1, 1):
             k.part("hopper_wall", hb.w * 0.05, hl * 2, H * 0.5, x=sx * hw, y=hb.y, z=top + H * 0.22, mats=k.A)
-            k.part("hopper_wall", hw * 2 + hb.w * 0.05, hb.w * 0.05, H * 0.5, y=hb.y + sx * hl, z=top + H * 0.22, mats=k.A)
+            # (a touch lower than the side walls, so where they cross their tops don't sit in the same plane)
+            k.part("hopper_wall", hw * 2 + hb.w * 0.05, hb.w * 0.05, H * 0.47, y=hb.y + sx * hl, z=top + H * 0.205, mats=k.A)
         for i in range(9):
             ico("ore", k.rng.uniform(0.12, 0.2) * hw * 2, (k.rng.uniform(-hw, hw) * 0.75, hb.y + k.rng.uniform(-hl, hl) * 0.75,
                                                           top + H * 0.15), rock, 1, parent=k.body)
@@ -1227,6 +1327,9 @@ def g_cruiser(k, L, W, H, ne, er, guns, s, ex):
     sides = 2 if guns >= 8 else 0
     top_ridge = min(3 if guns >= 10 else 2, max(1, (guns - sides) // 2 - 1))
     top_back = max(0, (guns - sides) // 2 - top_ridge)
+    # only as many behind the citadel as fit there with room to swing; the rest go under the keel
+    room = (cit.back() - L * 0.02) - (hb.back() + L * 0.03)
+    top_back = min(top_back, max(0, int(room // (s * 1.7))))
     bottom = guns - sides - top_ridge - top_back
     spread(k, ridge, top_ridge, s, ridge.y - ridge.l * 0.05, ridge.front() - ridge.l * 0.08, "top")
     spread(k, hb, top_back, s, hb.back() + L * 0.03, cit.back() - L * 0.02, "top")
@@ -1319,7 +1422,7 @@ def g_saucer(k, L, W, H, ne, er, guns, s, ex):
         k.mount(sp.side_x(sx, R * 0.1), R * 0.1, H * 0.08, side(sx), s)
     rest = guns - 2
     for i in range(rest):
-        y = (R * 0.45 if i // 2 == 0 else -R * 0.45)
+        y = (1.0 if i // 2 == 0 else -1.0) * R * (0.62 if v == 2 else 0.45)  # (clear of the tower on a tiered one)
         if i % 2 == 0:
             k.mount(0, y, H * 0.55 + H * 0.125, "top", s)
         else:
@@ -1335,7 +1438,7 @@ FEATURES = {
     "gnat": ["x_fins"], "wisp": ["sail"], "pike": ["prow_gun"], "bumble": ["tanks", "antennas"],
     "drifter": ["domes", "antennas"], "hornet": ["spikes", "ventral_fin"], "digger": ["radiators"], "porter": ["outriggers"],
     "falcon": ["forward_wings", "dorsal_fin"], "vanguard": ["armor_bands", "prow_gun"], "quarry": ["tanks", "domes"],
-    "wayfarer": ["sail", "x_fins"], "brick": ["antennas", "tanks"], "raptor": ["nacelles"], "bulwark": ["ring_collar", "domes"],
+    "wayfarer": ["sail", "x_fins"], "brick": ["antennas", "tanks"], "raptor": ["ventral_fin"], "bulwark": ["ring_collar", "domes"],
     "trawler": ["radiators", "hangar_pods"], "phantom": ["split_prow"], "warden": ["antennas", "nacelles"],
     "tempest": ["nacelles", "x_fins"], "excavator": ["outriggers", "antennas"], "pathfinder": ["radiators", "domes"],
     "mantis": ["split_prow", "spikes"], "dominator": ["prow_gun", "radiators"], "atlas": ["ring_collar", "hangar_pods"],
@@ -1379,6 +1482,8 @@ def features(k, fx):
             for i in range(6):
                 y = -L * 0.35 + i * L * 0.12
                 for sx in (-1, 1):
+                    if k.near_mount((m.x + sx * m.hw(y) * 0.85, y, m.top(y)), H * 0.3):
+                        continue
                     cyl("spike", H * 0.08 + 0.05, H * 0.6, (m.x + sx * m.hw(y) * 0.85, y, m.top(y) + H * 0.2), k.acc,
                         rot=(0, sx * 0.5, 0), parent=k.body, segs=6, r2=0.0)
         elif f == "prow_gun":
@@ -1409,6 +1514,8 @@ def features(k, fx):
                 y = -L * 0.3 + i * L * 0.12
                 x = (m.hw(y) * 0.55) * (1 if i % 2 else -1)
                 h = H * 0.6 + L * 0.04 * (1 + i % 2)
+                if k.near_mount((x, y, m.top(y)), 0.2):
+                    continue
                 cyl("antenna", 0.025 + L * 0.0008, h, (x, y, m.top(y) + h / 2), k.dark, parent=k.body, segs=6)
                 ico("antenna_tip", 0.05 + L * 0.0015, (x, y, m.top(y) + h), k.amber, 1, parent=k.body)
                 k.grow((x, y, m.top(y) + h / 2), (0.1, 0.1, h / 2))
@@ -1416,6 +1523,10 @@ def features(k, fx):
             for sx in (-1, 1):
                 y = L * 0.1 * sx
                 c = (sx * m.hw(y) * 0.5, y, m.top(y))
+                if k.near_mount(c, H * 0.3 + 0.1):
+                    c = (sx * m.hw(y) * 0.5, y - L * 0.22 * sx, m.top(y - L * 0.22 * sx))
+                    if k.near_mount(c, H * 0.3 + 0.1):
+                        continue
                 ico("sensor_dome", H * 0.28 + 0.1, c, k.glass, 2, parent=k.body, smooth=True)
                 cyl("dome_base", H * 0.3 + 0.11, H * 0.08, c, k.dark, parent=k.body, segs=16)
         elif f == "forward_wings":
@@ -1441,16 +1552,19 @@ def features(k, fx):
                 k.part("prong", W * 0.12, L * 0.3, H * 0.4, x=sx * W * 0.2, y=m.front() + L * 0.08, z=-H * 0.05, taper=(0.3, 0.5), mats=k.A)
             box("prong_glow", (W * 0.2, 0.08, H * 0.12), (0, m.front() + L * 0.02, -H * 0.05), k.win, 0.0, parent=k.body)
         elif f == "sail":
-            x = -m.hw(-L * 0.1) * 0.6
-            pts = [(L * 0.05, H * 0.4), (-L * 0.3, H * 0.4), (-L * 0.24, H * 0.4 + L * 0.3), (0.0, H * 0.4 + L * 0.26)]
+            # aft, and out toward the edge of the hull, clear of the turrets on the spine
+            x = -m.hw(-L * 0.33) * 0.8
+            pts = [(-L * 0.18, H * 0.4), (-L * 0.48, H * 0.4), (-L * 0.43, H * 0.4 + L * 0.28), (-L * 0.22, H * 0.4 + L * 0.24)]
             k.plate("sail", pts, max(0.05, H * 0.03), 0.0, plane="yz", x=x, mat_=k.glass)
-            k.plate("sail_frame", [(L * 0.05, H * 0.4), (-L * 0.3, H * 0.4), (-L * 0.3, H * 0.4 + L * 0.02), (L * 0.05, H * 0.4 + L * 0.02)],
+            k.plate("sail_frame", [(-L * 0.18, H * 0.4), (-L * 0.48, H * 0.4), (-L * 0.48, H * 0.4 + L * 0.02), (-L * 0.18, H * 0.4 + L * 0.02)],
                     max(0.08, H * 0.05), 0.0, plane="yz", x=x, mat_=k.dark)
-            cyl("sail_mast", 0.04 + L * 0.001, L * 0.28, (x, -L * 0.12, H * 0.4 + L * 0.14), k.dark, parent=k.body, segs=6)
+            cyl("sail_mast", 0.04 + L * 0.001, L * 0.26, (x, -L * 0.33, H * 0.4 + L * 0.13), k.dark, parent=k.body, segs=6)
         elif f == "tanks":
             for sx in (-1, 1):
                 for y in (L * 0.05, -L * 0.22):
                     c = (sx * (m.hw(y) + H * 0.22), y, -H * 0.18)
+                    if k.near_mount(c, H * 0.25 + L * 0.11):
+                        continue
                     along_y(H * 0.22 + 0.05, L * 0.22, c, k.hull2, parent=k.body, segs=14)
                     along_y(H * 0.24 + 0.05, L * 0.02, c, k.acc, parent=k.body, segs=14)
                     k.grow(c, (H * 0.25, L * 0.11, H * 0.25))
@@ -1716,7 +1830,7 @@ def pirate(eid):
             k.plate("claw_edge", [(sx * 5.0, -2.6), (sx * 5.7, -3.4), (sx * 5.1, -6.5), (sx * 4.5, -5.8)], 0.45, -0.2, mat_=trim)
             k.part("armor_slab", 0.8, 9.0, 2.6, x=sx * (hb.hw(-1.0) + 0.2), y=-1.0, mats=k.A, rot=(0, sx * 0.3, 0))
 
-        for x in (-1.8, 0.0, 1.8):
+        for x in (-2.2, 0.0, 2.2):
             k.engine(x, hb.back() - 0.05, 0, 0.75)
         tw = k.part("tower", 2.4, 3.2, 3.0, y=-2.8, z=hb.top(-2.8) + 1.3, mats=k.A, taper=(0.8, 0.9))
         windows(tw.side_frame(1, tw.y, tw.z + 0.4), 2.6, 0.6, 2, lamp, k.rng, k.body, gap=0.35)

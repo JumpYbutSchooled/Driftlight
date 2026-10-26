@@ -149,7 +149,7 @@ func _rebuild() -> void:
 	bar.add_theme_constant_override("separation", 8)
 	bar.add_child(UI.btn("All Blasters", Game.mount_all.bind(Game.BLASTER), "weapon"))
 	for id in Game.WEAPON_ORDER:
-		if id != Game.BLASTER and Game.weapon_stock.get(id, 0) > 0 and bar.get_child_count() < 4:
+		if id != Game.BLASTER and Game.spare_weapon(id) > 0 and bar.get_child_count() < 4:
 			bar.add_child(UI.btn("Fill with %s" % Game.WEAPONS[id].name, Game.mount_all.bind(id), "weapon", Game.WEAPONS[id].color))
 	_list.add_child(bar)
 	var st := Game.stats_ship()
@@ -159,12 +159,12 @@ func _rebuild() -> void:
 		var m: Dictionary = Game.MODULES[mid]
 		_list.add_child(_module_row(mid, m.name + "   installed", m.desc, "Remove", Game.unequip_module.bind(i), true))
 	for id in Game.MODULE_ORDER:
-		var n: int = Game.module_stock.get(id, 0)
+		var n: int = Game.spare_module(id)
 		if n > 0:
 			var m: Dictionary = Game.MODULES[id]
 			_list.add_child(_module_row(id, "%s  x%d" % [m.name, n], m.desc, "Install", Game.equip_module.bind(id),
 				Game.modules_equipped.size() < st.slots and Game.module_fits(id)))
-	if Game.modules_equipped.is_empty() and Game.module_stock.values().all(func(v): return v <= 0):
+	if Game.modules_equipped.is_empty() and Game.MODULE_ORDER.all(func(m): return Game.spare_module(m) <= 0):
 		_list.add_child(UI.lbl("No modules yet: build them in a station's Fabricator, or find them in wrecks.", 15, UI.MUTED))
 
 
@@ -192,7 +192,7 @@ func _slot_row(i: int, current: String) -> Control:
 	pick.add_theme_font_override("font", UI.bold)
 	var ids := []
 	for id in Game.WEAPON_ORDER:
-		var spare: int = Game.weapon_stock.get(id, 0)
+		var spare: int = Game.spare_weapon(id)
 		if id == Game.BLASTER or id == current or spare > 0:
 			pick.add_item(Game.WEAPONS[id].name + ("" if id == Game.BLASTER or id == current else "  (%d spare)" % spare))
 			ids.append(id)

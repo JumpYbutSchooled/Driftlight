@@ -98,6 +98,32 @@ func _shot(shot_name: String) -> void:
 	print("SHOT ", shot_name)
 
 
+## A click of the fire button (press, a frame, release): mining beams toggle on a click.
+func _click() -> void:
+	Input.action_release("fire")
+	await get_tree().process_frame
+	Input.action_press("fire")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Input.action_release("fire")
+
+
+## Order the docking autopilot and wait (fast) until docked, noting the stages it went through.
+func _autodock(st: Dictionary, limit_ms: int) -> Array:
+	main.select(st)
+	main.order("use")
+	Engine.time_scale = 8.0
+	var t0 := Time.get_ticks_msec()
+	var stages := []
+	while main.mode != "docked" and Time.get_ticks_msec() - t0 < limit_ms:
+		var s: String = main.autopilot.get("stage", "")
+		if s != "" and (stages.is_empty() or stages[-1] != s):
+			stages.append(s)
+		await get_tree().process_frame
+	Engine.time_scale = 1.0
+	return [stages, (Time.get_ticks_msec() - t0) / 1000.0]
+
+
 func _find(test: Callable) -> Array:
 	for s in Game.systems:
 		for i in s.locs.size():
@@ -205,7 +231,10 @@ func _run() -> void:
 	main.snap_camera()
 	await _secs(0.8)
 	await _shot("02e_bay_inside")
-	# fly on in to the pad: that docks
+	# fly on in to the pad: that docks (and puts what the ship carries into station storage)
+	Game.cargo["corrite:1"] = 12
+	Game.materials["ferrox"] = 7
+	Game.changed.emit()
 	p.throttle = 1.0
 	p.vel = p.forward() * 30.0
 	var t0 := Time.get_ticks_msec()
@@ -216,17 +245,52 @@ func _run() -> void:
 	while main.mode != "docked" and Time.get_ticks_msec() - t0 < 30000:
 		await get_tree().process_frame
 	print("docking by flying in: mode %s after %.1f s" % [main.mode, (Time.get_ticks_msec() - t0) / 1000.0])
+	print("storage on docking: carried ore %d ferrox %d, stored ore %d ferrox %d" % [Game.cargo_used(), Game.carried("ferrox"),
+		Game.storage.cargo.get("corrite:1", 0), Game.stored("ferrox")])
 	await _secs(0.5)
 	await _shot("02f_docked")
+	main.station_ui._set_tab("storage")
+	await _secs(0.4)
+	await _shot("02f3_storage")
+	# the maps and menus open over the station, and close back to it
+	main.open_menu("galaxy")
+	await _secs(0.6)
+	await _shot("02f4_map_from_dock")
+	main.close_maps()
+	print("map from the dock: back to %s, station menu showing %s" % [main.mode, main.station_ui.visible])
+	# what the ship carries is lost with it; storage is safe
+	Game.materials["ferrox"] = 5
+	var lost := Game.lose_carried()
+	print("lose carried: '%s', ferrox carried %d, stored %d" % [lost, Game.carried("ferrox"), Game.stored("ferrox")])
 	main.close_panel()
-	await _secs(2.6)
+	await _secs(1.2)
 	await _shot("02f2_startup")
 	t0 = Time.get_ticks_msec()
 	while main.mode != "fly" and Time.get_ticks_msec() - t0 < 15000:
 		await get_tree().process_frame
-	print("undocked: mode %s after %.1f s of startup, %.0f m from the pad, facing out %.2f, moving %.1f m/s" % [main.mode,
-		(Time.get_ticks_msec() - t0) / 1000.0 + 2.6, p.position.distance_to(bay.pad), p.forward().dot(bay.out), p.vel.length()])
+	print("undocked: mode %s after %.1f s of startup, %.0f m from the pad, facing out %.2f" % [main.mode,
+		(Time.get_ticks_msec() - t0) / 1000.0 + 1.2, p.position.distance_to(bay.pad), p.forward().dot(bay.out)])
+	# launched out of the bay at cruising speed until clear of the mouth
+	var fastest_out := 0.0
+	t0 = Time.get_ticks_msec()
+	while main.autopilot.get("mode", "") == "launch" and Time.get_ticks_msec() - t0 < 8000:
+		fastest_out = maxf(fastest_out, p.vel.length())
+		await get_tree().process_frame
+	print("launch: %.0f m/s at most (cruise %.0f), done after %.1f s, %.0f m out of the mouth" % [fastest_out,
+		p.top_speed() * main.CRUISE_MULT, (Time.get_ticks_msec() - t0) / 1000.0, (p.position - bay.mouth).dot(bay.out)])
 	await _shot("02g_undocked")
+	# the docking autopilot from just off to one side of the bay, close in: no circling
+	p.position = bay.mouth + bay.out * 160.0 + bay.right * 280.0 + Vector3(0, 70, 0)
+	main.aim = Basis.looking_at(bay.right, Vector3.UP)
+	p.basis = main.aim
+	p.stop()
+	var side_dock: Array = await _autodock(st, 60000)
+	print("docking autopilot from beside the bay: mode %s, stages %s, %.1f s real (x8)" % [main.mode, str(side_dock[0]), side_dock[1]])
+	if main.mode == "docked":
+		main.close_panel()
+		t0 = Time.get_ticks_msec()
+		while main.mode != "fly" and Time.get_ticks_msec() - t0 < 15000:
+			await get_tree().process_frame
 	# the docking autopilot from behind the station: it has to go round, line up and fly in
 	p.position = st.pos - bay.out * 1500.0 + Vector3(0, 100, 0)
 	main.aim = Basis.looking_at((st.pos - p.position).normalized(), Vector3.UP)
@@ -248,6 +312,16 @@ func _run() -> void:
 	Engine.time_scale = 1.0
 	print("docking autopilot from behind: mode %s after %.1f s real (x8), %.0f m from the pad" % [main.mode,
 		(Time.get_ticks_msec() - t0) / 1000.0, p.position.distance_to(bay.pad)])
+	# and from underneath the station, inside its keep-out sphere
+	if main.mode == "docked":
+		main.close_panel()
+		t0 = Time.get_ticks_msec()
+		while main.mode != "fly" and Time.get_ticks_msec() - t0 < 15000:
+			await get_tree().process_frame
+	p.position = st.pos + Vector3(150, -700, 200)
+	p.stop()
+	var under: Array = await _autodock(st, 90000)
+	print("docking autopilot from under the station: mode %s, stages %s, %.1f s real (x8)" % [main.mode, str(under[0]), under[1]])
 	if main.mode == "docked":
 		main.close_panel()
 		t0 = Time.get_ticks_msec()
@@ -312,6 +386,15 @@ func _run() -> void:
 		main.autopilot.get("mode", "off")])
 	await _secs(2.0)
 	print("after cruise: %.0f m/s" % p.vel.length())
+	# a hard turn at cruise speed: the dust streaks bend round with the ship
+	p.cruise_v = p.top_speed() * 10.0
+	await _secs(1.0)
+	Input.action_press("yaw_left")
+	await _secs(0.7)
+	await _shot("03j_dust_curve")
+	Input.action_release("yaw_left")
+	p.cruise_v = 0.0
+	await _secs(1.5)
 	var vein = main.overview_entries(20).filter(func(r): return not r.t is Dictionary and r.t.is_in_group("asteroids"))[0].t
 	main.select(vein)
 	main.order("approach")
@@ -356,8 +439,16 @@ func _run() -> void:
 	await _secs(0.4)
 	await _shot("03f_overview_filter")
 	print("overview filtered to ore, Normal+: %d rows" % main.overview._rows.size())
-	main.overview.cat = "all"
+	main.overview.cat = "veins"
 	main.overview.minq = -1
+	main.overview.sort = "ore"
+	main.overview._refresh = 0.0
+	await _secs(0.4)
+	await _shot("03f2_overview_veins_by_ore")
+	print("overview veins by ore: %d rows, first %s" % [main.overview._rows.size(),
+		main.overview._rows[0].name if not main.overview._rows.is_empty() else "-"])
+	main.overview.cat = "all"
+	main.overview.sort = "dist"
 	# O: auto-collect flies round the loose ore, picking it all up
 	var cargo0 := Game.cargo_used()
 	var reach: int = get_tree().get_nodes_in_group("chunks").filter(
@@ -389,15 +480,19 @@ func _run() -> void:
 	var held0 := Game.cargo_used()
 	var chunks0 := get_tree().get_nodes_in_group("chunks").size()
 	var left0: int = beam_rock.remaining
-	Input.action_press("fire")
+	await _click()  # one click: the beams lock on and keep cutting
 	await _secs(0.4)
 	main.cam_turn(0.6, 0.3)  # the beams stay locked whatever the crosshair does
 	await _secs(2.6)
 	await _shot("03h_mining_beam")
-	print("mining beam: locked %s, rock %d -> %d, hold %d -> %d, new loose chunks %d" % [p.beam_lock == beam_rock, left0,
-		beam_rock.remaining if is_instance_valid(beam_rock) else 0, held0, Game.cargo_used(),
+	print("mining beam: locked %s (no button held), rock %d -> %d, hold %d -> %d, new loose chunks %d" % [p.beam_lock == beam_rock,
+		left0, beam_rock.remaining if is_instance_valid(beam_rock) else 0, held0, Game.cargo_used(),
 		get_tree().get_nodes_in_group("chunks").size() - chunks0])
-	Input.action_release("fire")
+	main.snap_camera()
+	await _secs(0.3)
+	await _click()  # another click stops them
+	await _secs(0.2)
+	print("mining beam after a second click: locked %s" % [p.beam_lock != null])
 	main.snap_camera()
 	await _secs(1.5)
 	print("tractor beam: reach %.0f m, %d chunks being pulled" % [p.tractor_range(),

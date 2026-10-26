@@ -7,7 +7,7 @@ signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 signal jettisoned(ore: String, q: int, n: int)  # cargo thrown out of the hold (main spawns it as loose chunks)
 
-const VERSION := 4  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 5  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots: your pilot, and a sandbox where everything is free (anyone can open it)
 const SLOTS := {"pilot": "user://driftlight_save.json", "sandbox": "user://driftlight_admin.json"}
@@ -20,7 +20,7 @@ const MIN_SPACING := 62.0  # closest two systems can be on the galaxy map
 const LINK_RANGE := 190.0  # furthest apart two systems can be and still get a stargate
 const MINE_COST := 7.0  # mining power needed to split one ore off a Corrite rock; rarer ores are harder
 const HARDNESS_PER_TIER := 0.2
-const REFINE_TIME := [0.8, 1.2, 2.0, 4.0]  # seconds to smelt one raw ore, by quality (rarer ores +12% per tier)
+const REFINE_TIME := [0.4, 0.6, 1.0, 2.0]  # seconds to smelt one raw ore, by quality (rarer ores +12% per tier)
 const PROBE_COST := {"corrite": 4}
 const BUILD_COST_MULT := 4  # building ships, weapons and modules takes this many times the listed materials
 const PROBE_PRICE := 12  # credits, at a market
@@ -309,7 +309,7 @@ const WEAPON_BASE := {
 		"color": Color("ffe066"), "size": Vector2(2, 6), "cost": {}, "desc": "The standard gun pod. Free and unlimited - every empty slot has one."},
 	"mining_lasers": {"name": "Mining Laser", "damage": 3.0, "rate": 7.0, "speed": 1100.0, "mining": 2.2, "life": 0.7, "beam": true,
 		"color": Color("66ffcc"), "size": Vector2(2, 8), "cost": {"corrite": 70, "lumenite": 15},
-		"desc": "A steady beam that locks on to the rock under your crosshair and cuts ore straight into your hold."},
+		"desc": "Click a rock and its beam locks on and cuts ore straight into your hold on its own. Click again to stop."},
 	"scatter_guns": {"name": "Scatter Gun", "damage": 4.0, "rate": 1.6, "speed": 820.0, "mining": 0.6, "life": 0.6,
 		"pellets": 5, "spread": 22.0, "color": Color("ffb36b"), "size": Vector2(3, 3), "cost": {"corrite": 90, "ferrox": 45},
 		"desc": "Five pellets per shot. Brutal up close."},
@@ -410,7 +410,7 @@ const MODULE_BASE := {
 		"cost": {"lumenite": 45, "cryonite": 40}},
 	"mining_amp": {"name": "Mining Amplifier", "cat": "mining", "fx": {"mining_mul": 1.5}, "cost": {"ferrox": 60, "vexium": 30}},
 	"tractor_beam": {"name": "Tractor Beam", "cat": "mining", "fx": {"tractor_add": 300}, "cost": {"lumenite": 40, "vexium": 25}},
-	"portable_refinery": {"name": "Portable Refinery", "cat": "refinery", "fx": {"refine_add": 8.0}, "only": "refinery",
+	"portable_refinery": {"name": "Portable Refinery", "cat": "refinery", "fx": {"refine_add": 16.0}, "only": "refinery",
 		"cost": {"ferrox": 200, "cryonite": 80, "ambrite": 30}},
 	"overcharger": {"name": "Overcharger", "cat": "weapon", "fx": {"fire_mul": 1.2}, "cost": {"vexium": 60, "aurelite": 25}},
 	"damage_amp": {"name": "Damage Amplifier", "cat": "weapon", "fx": {"damage_mul": 1.15}, "cost": {"vexium": 80, "cindrite": 30}},
@@ -544,6 +544,11 @@ var route_stops := []  # further stops after route_target, in order
 var regions_seen := {}  # region index -> true
 var regional_seen := {}  # regional ore id -> true
 var home := [0, 0]  # [system, location] of the station you last docked at: where a lost ship is rebuilt
+# Station storage: one store shared by every station. What's in it is safe; everything carried in the ship
+# (cargo, materials, spices, spare weapons and modules, probes, portable wormholes) is lost with the ship.
+var storage := {"materials": {}, "spices": {}, "weapons": {}, "modules": {}, "cargo": {}, "probes": 0, "portals": 0}  # "materials" / "spices" / "weapons" / "modules": {id: n}, "cargo": {"ore:q": n}, "probes": n, "portals": n
+var auto_store := true  # put everything carried into storage whenever you dock
+var docked := false  # (main sets it) at a station: storage can be drawn on for building and fitting
 var dirty := false  # something changed since the last save
 var playtime := 0.0
 var no_save := false  # set by the screenshot test so it never touches the player's save
@@ -850,6 +855,8 @@ func new_game() -> void:
 	regions_seen = {}
 	regional_seen = {}
 	home = [0, 0]
+	storage = _empty_storage()
+	auto_store = true
 	playtime = 0.0
 	route_target = -1
 	current_system = 0
@@ -1373,11 +1380,16 @@ func module_icon(id: String) -> String:
 	return MODULE_CATS[MODULES[id].cat].icon
 
 
-## How many you have of a cost item: credits, a material, a spice, or ("w:<id>" / "m:<id>") a weapon or
-## module in your stores.
+## How many you have of a cost item - carried and in station storage together: credits, a material, a spice,
+## or ("w:<id>" / "m:<id>") a spare weapon or module.
 func have(id: String) -> int:
 	if id == "credits":
 		return credits
+	return carried(id) + stored(id)
+
+
+## How many of a cost item the ship is carrying (lost if it's destroyed).
+func carried(id: String) -> int:
 	if id.begins_with("w:"):
 		return weapon_stock.get(id.substr(2), 0)
 	if id.begins_with("m:"):
@@ -1385,6 +1397,130 @@ func have(id: String) -> int:
 	if ORES.has(id):
 		return materials.get(id, 0)
 	return spices.get(id, 0)
+
+
+## How many of a cost item are in station storage.
+func stored(id: String) -> int:
+	if id.begins_with("w:"):
+		return storage.weapons.get(id.substr(2), 0)
+	if id.begins_with("m:"):
+		return storage.modules.get(id.substr(2), 0)
+	if ORES.has(id):
+		return storage.materials.get(id, 0)
+	return storage.spices.get(id, 0)
+
+
+## Use up `n` of a cost item: from what the ship carries first, then from storage.
+func take(id: String, n: int) -> void:
+	var from_ship := mini(n, carried(id))
+	give(id, -from_ship)
+	n -= from_ship
+	if n > 0:
+		var d: Dictionary = _store_dict(id)
+		var key := id.substr(2) if id.begins_with("w:") or id.begins_with("m:") else id
+		d[key] = d.get(key, 0) - n
+		if d[key] <= 0:
+			d.erase(key)
+
+
+func _store_dict(id: String) -> Dictionary:
+	if id.begins_with("w:"):
+		return storage.weapons
+	if id.begins_with("m:"):
+		return storage.modules
+	return storage.materials if ORES.has(id) else storage.spices
+
+
+static func _empty_storage() -> Dictionary:
+	return {"materials": {}, "spices": {}, "weapons": {}, "modules": {}, "cargo": {}, "probes": 0, "portals": 0}
+
+
+## Put everything the ship carries into station storage (cargo, materials, spices, spare gear, probes,
+## portable wormholes). Returns how many things moved.
+func store_all() -> int:
+	var n := 0
+	for pair in [[materials, storage.materials], [spices, storage.spices], [weapon_stock, storage.weapons],
+			[module_stock, storage.modules], [cargo, storage.cargo]]:
+		var src: Dictionary = pair[0]
+		var dst: Dictionary = pair[1]
+		for k in src.keys():
+			if src[k] > 0:
+				dst[k] = dst.get(k, 0) + src[k]
+				n += src[k]
+		src.clear()
+	n += probes + portals
+	storage.probes += probes
+	storage.portals += portals
+	probes = 0
+	portals = 0
+	changed.emit()
+	return n
+
+
+## Move one stack between the ship and storage. kind: materials, spices, weapons, modules, cargo, probes,
+## portals. to_ship false stores it.
+func move_stack(kind: String, key: String, to_ship: bool) -> void:
+	var ship_side: Dictionary = {"materials": materials, "spices": spices, "weapons": weapon_stock, "modules": module_stock,
+		"cargo": cargo}.get(kind, {})
+	if kind in ["probes", "portals"]:
+		var n: int = storage[kind] if to_ship else get(kind)
+		if to_ship:
+			set(kind, get(kind) + n)
+			storage[kind] = 0
+		else:
+			storage[kind] += n
+			set(kind, 0)
+		changed.emit()
+		return
+	var src: Dictionary = storage[kind] if to_ship else ship_side
+	var dst: Dictionary = ship_side if to_ship else storage[kind]
+	var n: int = src.get(key, 0)
+	if kind == "cargo" and to_ship:
+		n = mini(n, stats_ship().cargo - cargo_used())  # only as much as the hold has room for
+	if n <= 0:
+		return
+	dst[key] = dst.get(key, 0) + n
+	src[key] -= n
+	if src[key] <= 0:
+		src.erase(key)
+	changed.emit()
+
+
+## The ship is lost: everything it carried goes with it. Returns a description of what was lost.
+func lose_carried() -> String:
+	var lost := []
+	var ore := cargo_used()
+	if ore > 0:
+		lost.append("%d ore" % ore)
+	var mats := 0
+	for k in materials:
+		mats += materials[k]
+	if mats > 0:
+		lost.append("%d materials" % mats)
+	var gear := 0
+	for d in [weapon_stock, module_stock]:
+		for k in d:
+			gear += d[k]
+	if gear > 0:
+		lost.append("%d spare weapons and modules" % gear)
+	var sp := 0
+	for k in spices:
+		sp += spices[k]
+	if sp > 0:
+		lost.append("%d spices" % sp)
+	if probes > 0:
+		lost.append("%d probes" % probes)
+	if portals > 0:
+		lost.append("%d portable wormholes" % portals)
+	cargo.clear()
+	materials.clear()
+	weapon_stock.clear()
+	module_stock.clear()
+	spices.clear()
+	probes = 0
+	portals = 0
+	changed.emit()
+	return ", ".join(lost)
 
 
 func give(id: String, n: int) -> void:
@@ -1427,7 +1563,10 @@ func pay(cost: Dictionary) -> void:
 	if sandbox:
 		return
 	for id in cost:
-		give(id, -cost[id])
+		if id == "credits":
+			credits -= cost[id]
+		else:
+			take(id, cost[id])
 
 
 func cargo_used() -> int:
@@ -1464,9 +1603,10 @@ func refinery(key: String, station_name := "") -> Dictionary:
 	return refineries[key]
 
 
-## Move one cargo stack into a station's furnace queue.
-func load_ore(key: String, station_name: String, cargo_key: String) -> void:
-	var n: int = cargo.get(cargo_key, 0)
+## Move one cargo stack (from the hold, or raw ore kept in storage) into a station's furnace queue.
+func load_ore(key: String, station_name: String, cargo_key: String, from_storage := false) -> void:
+	var src: Dictionary = storage.cargo if from_storage else cargo
+	var n: int = src.get(cargo_key, 0)
 	if n <= 0:
 		return
 	var parts: PackedStringArray = cargo_key.split(":")
@@ -1475,13 +1615,15 @@ func load_ore(key: String, station_name: String, cargo_key: String) -> void:
 		q[-1][2] += n
 	else:
 		q.append([parts[0], int(parts[1]), n])
-	cargo.erase(cargo_key)
+	src.erase(cargo_key)
 	changed.emit()
 
 
 func load_all(key: String, station_name: String) -> void:
 	for k in cargo.keys():
 		load_ore(key, station_name, k)
+	for k in storage.cargo.keys():
+		load_ore(key, station_name, k, true)
 
 
 ## Furnaces smelt one piece at a time, like Minecraft, and keep going wherever you are.
@@ -1545,7 +1687,7 @@ func collect(key: String) -> Dictionary:
 	var out: Dictionary = refineries[key].output
 	refineries[key].output = {}
 	for id in out:
-		give(id, out[id])
+		storage.materials[id] = storage.materials.get(id, 0) + out[id]  # straight into station storage, safe
 	if not out.is_empty():
 		changed.emit()
 	return out
@@ -1575,15 +1717,18 @@ func sell(ore: String, n: int, cat: int) -> void:
 	n = mini(n, have(ore))
 	if n <= 0:
 		return
-	materials[ore] -= n
+	take(ore, n)
 	add_credits(n * sell_price(ore, cat))
 	say("Sold %d %s for %d credits." % [n, ORES[ore].name, n * sell_price(ore, cat)], Color("ffd24a"))
 
 
 func sell_portal() -> void:
-	if portals <= 0:
+	if portals <= 0 and storage.portals <= 0:
 		return
-	portals -= 1
+	if portals > 0:
+		portals -= 1
+	else:
+		storage.portals -= 1
 	add_credits(WORMHOLE_PRICE)
 	say("Sold a portable wormhole for %d credits." % WORMHOLE_PRICE, Color("ffd24a"))
 
@@ -1727,16 +1872,35 @@ func loadout(id := "") -> Array:
 	return l
 
 
-## Put a weapon in a gun slot; whatever was there goes back into storage.
+## Spare weapons of a type you can fit right now: carried, plus station storage while docked.
+func spare_weapon(id: String) -> int:
+	return weapon_stock.get(id, 0) + (storage.weapons.get(id, 0) if docked else 0)
+
+
+func spare_module(id: String) -> int:
+	return module_stock.get(id, 0) + (storage.modules.get(id, 0) if docked else 0)
+
+
+## Take one spare weapon / module out of the ship's stores (or, docked, station storage).
+func _use_spare(stock: Dictionary, stored_d: Dictionary, id: String) -> void:
+	if stock.get(id, 0) > 0:
+		stock[id] -= 1
+	else:
+		stored_d[id] -= 1
+		if stored_d[id] <= 0:
+			stored_d.erase(id)
+
+
+## Put a weapon in a gun slot; whatever was there goes back into the ship's stores.
 func mount(slot: int, weapon: String) -> void:
 	var l := loadout()
 	var old: String = l[slot]
 	if old == weapon:
 		return
 	if weapon != BLASTER:
-		if weapon_stock.get(weapon, 0) <= 0:
+		if spare_weapon(weapon) <= 0:
 			return
-		weapon_stock[weapon] -= 1
+		_use_spare(weapon_stock, storage.weapons, weapon)
 	if old != BLASTER:
 		weapon_stock[old] = weapon_stock.get(old, 0) + 1
 	l[slot] = weapon
@@ -1749,9 +1913,9 @@ func mount_all(weapon: String) -> void:
 		mount(i, weapon)
 
 
-## Weapons of this type you own, mounted (on any ship) or in storage.
+## Weapons of this type you own, mounted (on any ship), carried or in storage.
 func weapon_count(id: String) -> int:
-	var n: int = weapon_stock.get(id, 0)
+	var n: int = weapon_stock.get(id, 0) + storage.weapons.get(id, 0)
 	for ship in loadouts:
 		n += loadouts[ship].count(id)
 	return n
@@ -1763,12 +1927,12 @@ func module_fits(id: String) -> bool:
 
 
 func equip_module(id: String) -> void:
-	if module_stock.get(id, 0) <= 0 or modules_equipped.size() >= SHIPS[ship_id].modules:
+	if spare_module(id) <= 0 or modules_equipped.size() >= SHIPS[ship_id].modules:
 		return
 	if not module_fits(id):
 		say("The %s only fits mining and hauling ships." % MODULES[id].name, Color("ff9a8a"))
 		return
-	module_stock[id] -= 1
+	_use_spare(module_stock, storage.modules, id)
 	modules_equipped.append(id)
 	changed.emit()
 
@@ -1789,7 +1953,7 @@ func stats_ship() -> Dictionary:
 		"tractor": 90.0, "regen": 0.0, "mining": b.get("mining", 1.0), "fire": b.get("fire", 1.0),
 		"damage": b.get("damage", 1.0), "bolt": b.get("bolt", 1.0), "stealth": b.get("stealth", 1.0),
 		"armor": 1.0, "shield_delay": 3.5, "shield_rate": 0.25, "probe": b.get("probe", 1.0), "warp": b.get("warp", 1.0),
-		"salvage": 1, "refine": 30.0 if s.get("capital", false) and s.get("refinery", false) else 0.0, "scan": 1.0, "sense": 0.0,
+		"salvage": 1, "refine": 60.0 if s.get("capital", false) and s.get("refinery", false) else 0.0, "scan": 1.0, "sense": 0.0,
 		"jump": float(s.get("jump", 0)), "capital": s.get("capital", false)}
 	for m in modules_equipped:
 		var fx: Dictionary = MODULES[m].fx
@@ -2150,7 +2314,7 @@ func turn_in(index: int) -> void:
 	var m: Dictionary = missions[index]
 	if m.type != "deliver" or have(m.ore) < m.need:
 		return
-	give(m.ore, -m.need)
+	take(m.ore, m.need)
 	_complete_mission(m)
 	changed.emit()
 
@@ -2248,7 +2412,8 @@ func save_game() -> void:
 		"unlocked": unlocked.keys(), "missions": missions, "route_target": route_target, "route_stops": route_stops,
 		"system": current_system, "loc": current_loc, "visited": visited, "scanned": scanned, "found": found, "salvaged": salvaged,
 		"relics_done": relics_done, "refineries": refineries, "notebook": notebook, "pinned": pinned,
-		"regions_seen": regions_seen.keys(), "regional_seen": regional_seen.keys(), "home": home, "playtime": playtime,
+		"regions_seen": regions_seen.keys(), "regional_seen": regional_seen.keys(), "home": home, "storage": storage,
+		"auto_store": auto_store, "playtime": playtime,
 		"saved_at": Time.get_unix_time_from_system()}
 	# write to a temp file first, keep the previous save as .bak, then swap the new one in
 	var tmp := save_path + ".tmp"
@@ -2340,6 +2505,22 @@ func load_game() -> bool:
 		regions_seen[int(r)] = true
 	for o in data.get("regional_seen", []):
 		regional_seen[str(o)] = true
+	var sd: Dictionary = data.get("storage", {})
+	storage = _empty_storage()
+	for kind in ["materials", "spices", "weapons", "modules", "cargo"]:
+		storage[kind] = _ints(sd.get(kind, {}))
+	for k in storage.materials.keys():
+		if not ORES.has(k):
+			storage.materials.erase(k)
+	for k in storage.weapons.keys():
+		if not WEAPONS.has(k):
+			storage.weapons.erase(k)
+	for k in storage.modules.keys():
+		if not MODULES.has(k):
+			storage.modules.erase(k)
+	storage.probes = int(sd.get("probes", 0))
+	storage.portals = int(sd.get("portals", 0))
+	auto_store = bool(data.get("auto_store", true))
 	var h: Array = data.get("home", [0, 0])
 	if h.size() == 2 and int(h[0]) < systems.size() and int(h[1]) < systems[int(h[0])].locs.size() and \
 			systems[int(h[0])].locs[int(h[1])].station:

@@ -27,7 +27,7 @@ No spoilers - just the shape of it. (The same guide is in the game: press H.)
    furnace and collect the materials when they're done - furnaces keep working while you're away.
 2. **Build, don't buy.** Everything is built from materials at a station's Fabricator. Markets sell the same
    things ready-made, but for a lot of credits. A Mining Laser is a great first build: its beam locks on and
-   cuts ore straight into your hold.
+   cuts ore straight into your hold: click a rock once and it keeps cutting until you click again.
 3. **Climb the ship ladder.** There are 54 ships in ten tiers. Each tier costs more than the last and does
    something better - more cargo, more guns, more speed, better mining. Pick the ones that suit you.
 4. **Mark up your gear.** Every weapon comes in five marks and every module in three, each built from the
@@ -40,8 +40,9 @@ No spoilers - just the shape of it. (The same guide is in the game: press H.)
 7. **Keep notes.** The notebook remembers every station, refinery, ore field and oddity you've seen. Pin a
    recipe to keep its materials on screen. Plot a route with stops on the galaxy map and press T to let the
    autopilot fly it.
-8. **Dying is a setback, not the end.** You're rebuilt at the last station you docked at. Near home your cargo
-   is recovered; out in Unsecure and Wild space it's lost.
+8. **Keep your valuables in storage.** Every station shares one store, and whatever is in it is safe. If your
+   ship is destroyed, everything it was carrying is lost - ore, materials, spare gear, spices. Docking stores
+   everything for you (you can turn that off). You're rebuilt at the last station you docked at.
 
 The **Sandbox** (pick it on the title screen) is a separate save where everything is free, with god mode,
 peaceful space and spawning tools (F8) - for anyone who just wants to fly the big ships.
@@ -56,7 +57,7 @@ peaceful space and spawning tools (F8) - for anyone who just wants to fly the bi
 | R / F | throttle up / down (on autopilot: how hard the autopilot pushes) |
 | X | brake (and stop the autopilot), SHIFT boost |
 | Mouse | swing the camera freely round the ship (it doesn't steer) |
-| Click | fire: the turrets swivel to whatever the crosshair is on; mining beams lock on to it |
+| Click | fire: the turrets swivel to whatever the crosshair is on; a click locks mining beams on (another stops them) |
 | Right-click | select whatever is under the crosshair |
 | C (or hold ALT) | free the cursor to click rows on the Overview and things in space |
 | 1 / 2 / 3 | approach / orbit / warp to the selected thing |

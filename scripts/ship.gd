@@ -615,20 +615,27 @@ func _beam_point(i: int):
 	return c + (from - c).normalized() * beam_lock.radius * 0.9
 
 
-## Mining beams: holding fire locks them on to the rock (or ship, or container) under the crosshair; while
-## it's held they stay on it - the turrets track it whatever the crosshair does - and cut it steadily. A
-## better mark sends more of the ore it cuts straight into the hold.
+## Mining beams: a click locks them on to the rock (or ship, or container) under the crosshair and they keep
+## cutting it on their own - the turrets track it whatever the crosshair does - until it's used up or you click
+## again to stop. A better mark sends more of the ore it cuts straight into the hold.
 func _update_beams(delta: float) -> void:
 	if _beams.is_empty():
 		return
-	var firing: bool = control and alive and main.mode == "fly" and not main.cursor_free() and Input.is_action_pressed("fire")
-	if not firing:
+	if not alive or main.mode != "fly":
 		beam_lock = null
-	elif beam_lock == null or not main.target_valid(beam_lock):
+	elif beam_lock != null and not main.target_valid(beam_lock):
 		beam_lock = null
-		var t = main.aim_target
-		if t != null and is_instance_valid(t) and not t.is_in_group("npcs") and position.distance_to(t.global_position) < BEAM_RANGE + t.radius:
-			beam_lock = t
+		Game.say("Mining beam: target gone - click another rock.", Color("8cd8ff"))
+	elif control and not main.cursor_free() and Input.is_action_just_pressed("fire"):
+		if beam_lock != null:
+			beam_lock = null  # click again: stop
+		else:
+			var t = main.aim_target
+			if t != null and is_instance_valid(t) and not t.is_in_group("npcs") and \
+					position.distance_to(t.global_position) < BEAM_RANGE + t.radius + radius:
+				beam_lock = t
+	if beam_lock != null and position.distance_to(beam_lock.global_position) > (BEAM_RANGE + beam_lock.radius + radius) * 2.0:
+		beam_lock = null  # flown well away from it
 	var lo := Game.loadout()
 	var any := false
 	var power := 0.0
@@ -640,7 +647,7 @@ func _update_beams(delta: float) -> void:
 		if holder == null:
 			continue
 		var p = _beam_point(i)
-		if p == null or i >= guns_ready.size() or not guns_ready[i] or position.distance_to(p) > BEAM_RANGE:
+		if p == null or i >= guns_ready.size() or not guns_ready[i] or position.distance_to(p) > BEAM_RANGE + radius:
 			holder.visible = false
 			continue
 		var w: Dictionary = Game.WEAPONS[lo[i]]

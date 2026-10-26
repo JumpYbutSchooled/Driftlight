@@ -233,6 +233,7 @@ func _draw_crosshair(_vs: Vector2) -> void:
 		for k in 5:
 			pts.append(lp + Vector2.from_angle(a + k * PI / 2.0) * r)
 		_ci.draw_polyline(pts, Color("66ffcc"), 1.5, true)
+		_text(lp + Vector2(-150, 34), "beams locked  -  click to stop", 13, Color("66ffcc", 0.85), HORIZONTAL_ALIGNMENT_CENTER, 300.0)
 	var guns: Array = p.guns_ready
 	if not guns.is_empty():
 		var clear := 0

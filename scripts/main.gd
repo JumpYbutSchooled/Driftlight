@@ -155,6 +155,7 @@ var ap_power := 1.0  # how hard the autopilot pushes (R/F while it flies)
 var auto_travel := false  # T: following the route on its own, warps and gates and all
 var _jump_cd := 0.0  # jump drive recharge
 var _prev_mode := "title"
+var _from_dock := false  # the open map or menu was opened from the station: closing it goes back there
 var ui_layer: CanvasLayer
 var vignette_layer: CanvasLayer
 var photo := false  # F1 photo mode
@@ -406,6 +407,8 @@ func _begin(sys_id: int, loc_i: int) -> void:
 
 func quit_to_title() -> void:
 	dock_screen.reset()
+	Game.docked = false
+	_from_dock = false
 	Game.save_game()
 	close_maps()
 	close_inventory()
@@ -719,9 +722,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			toggle_auto()
 			return
 		if event.is_action_pressed("guide"):
-			mode = "inventory"
-			inventory.open("guide")
+			open_menu("guide")
 			return
+	if mode == "docked":
+		# at a station the maps and menus open over it, and close back to it
+		for pair in [["galaxy_map", "galaxy"], ["system_map", "system"], ["inventory", "inventory"], ["fitting", "fitting"],
+				["guide", "guide"]]:
+			if event.is_action_pressed(pair[0]):
+				open_menu(pair[1])
+				return
 	if event.is_action_pressed("admin") and Game.sandbox:
 		if mode == "fly":
 			mode = "admin"
@@ -744,29 +753,29 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("galaxy_map"):
 		if galaxy_map.visible:
 			close_maps()
-		elif mode == "fly" or system_map.visible:
-			close_maps()
-			mode = "map"
+		elif system_map.visible:
+			system_map.close()
 			galaxy_map.open()
+		elif mode == "fly":
+			open_menu("galaxy")
 	elif event.is_action_pressed("system_map"):
 		if system_map.visible:
 			close_maps()
-		elif mode == "fly" or galaxy_map.visible:
-			close_maps()
-			mode = "map"
+		elif galaxy_map.visible:
+			galaxy_map.hide()
 			system_map.open()
+		elif mode == "fly":
+			open_menu("system")
 	elif event.is_action_pressed("inventory"):
 		if mode == "inventory":
 			close_inventory()
 		elif mode == "fly":
-			mode = "inventory"
-			inventory.open()
+			open_menu("inventory")
 	elif event.is_action_pressed("fitting"):
 		if mode == "fitting":
 			close_fitting()
 		elif mode == "fly":
-			mode = "fitting"
-			fitting.open()
+			open_menu("fitting")
 	elif event.is_action_pressed("debug"):
 		debug = not debug
 		debug_ui.visible = debug
@@ -982,28 +991,47 @@ func _check_docking() -> void:
 				else "Fly into the gate to jump to %s   -   G: autopilot" % lm.bay.dest
 
 
-## Where the docking autopilot heads next: lined up out in front of the port's mouth first (round the
-## station or gate if it's in the way), then straight in to the pad.
-func _dock_goal(lm: Dictionary) -> Vector3:
+## The docking (or gate) approach goes in stages, so it never circles or wanders off:
+##   "out"   - inside the station's (or gate's) keep-out sphere but not in its lane: straight away from it first;
+##   "lane"  - round it to the lane point out in front of the mouth, and stop there;
+##   "align" - turn to face straight in, holding still;
+##   "in"    - straight in along the axis to the pad (a gate: into the bore at cruising speed).
+## Picks the stage to start in from where the ship is: already in the bay or lined up in front of it, it goes on
+## from there.
+func _dock_stage(lm: Dictionary) -> String:
 	var bay: Dictionary = lm.bay
 	var p: Vector3 = player.position
 	var rel: Vector3 = p - bay.mouth
-	var along: float = rel.dot(bay.out)  # metres out in front of the mouth (negative: inside the bay)
+	var along: float = rel.dot(bay.out)  # metres out in front of the mouth (negative: inside the bay or bore)
 	var lateral: float = (rel - bay.out * along).length()
-	if (along < 30.0 and lateral < bay.bore) or (along >= 0.0 and along < BAY_LANE * 1.4 and lateral < 40.0 + along * 0.12):
-		return bay.pad
-	var goal: Vector3 = bay.mouth + bay.out * 450.0
-	var c: Vector3 = lm.pos
-	var seg := goal - p
-	var t := clampf((c - p).dot(seg) / maxf(seg.length_squared(), 1.0), 0.0, 1.0)
-	if (p + seg * t).distance_to(c) < bay.clear:
-		var side: Vector3 = p - c
-		side -= bay.out * side.dot(bay.out)
-		if side.length() < 1.0:
-			side = Vector3.RIGHT
-		goal = c + side.normalized() * (bay.clear + 300.0) + bay.out * 300.0
-	return goal
+	if bay.has("inner_c") and in_box(p, bay.inner_c, bay.inner_h):
+		return "in"
+	if along < 0.0 and lateral < bay.bore:
+		return "in"
+	if along >= 0.0 and along < _lane_dist(lm) * 1.3 and lateral < 30.0 + along * 0.08:
+		return "align"
+	if p.distance_to(lm.pos) < bay.clear + player.radius:
+		return "out"
+	return "lane"
 
+
+## How far out in front of the mouth the lane point is (clear of everything round the mouth).
+func _lane_dist(lm: Dictionary) -> float:
+	return BAY_LANE if lm.kind == "station" else 520.0
+
+
+## Where the docking autopilot is heading at this stage (see _dock_stage).
+func _dock_goal(lm: Dictionary) -> Vector3:
+	var bay: Dictionary = lm.bay
+	match autopilot.get("stage", "lane"):
+		"out":
+			var away: Vector3 = player.position - lm.pos
+			if away.length() < 1.0:
+				away = bay.out
+			return lm.pos + away.normalized() * (bay.clear + player.radius + 250.0)
+		"lane", "align":
+			return bay.mouth + bay.out * _lane_dist(lm)
+	return bay.pad if lm.kind == "station" else bay.mouth - bay.out * 200.0
 
 # ---------------------------------------------------------------- locations
 
@@ -1267,7 +1295,7 @@ func _build_feature(kind: String, at: Vector3, sys: Dictionary, loc: Dictionary,
 			world.add_child(st)
 			# the docking bay opens toward -Z: you fly in through the mouth and dock by reaching the pad
 			var bay := {"mouth": at + BAY_MOUTH, "out": Vector3.FORWARD, "pad": at + BAY_PAD, "zone_c": at + BAY_ZONE_C,
-				"zone_h": BAY_ZONE_H, "loc": loc, "right": Vector3.RIGHT, "hw": 120.0, "hh": 67.5, "clear": 850.0, "bore": 90.0,
+				"zone_h": BAY_ZONE_H, "loc": loc, "right": Vector3.RIGHT, "hw": 120.0, "hh": 67.5, "clear": 1000.0, "bore": 90.0,
 				"inner_c": at + Vector3(0, 0, -420), "inner_h": Vector3(125, 72, 165)}  # the whole bay (no warping in here)
 			var lm := _landmark(loc.name, "station", "station", at, open_station.bind(loc), "")
 			lm["bay"] = bay
@@ -1396,8 +1424,8 @@ func _spawn_field(center: Vector3, sys: Dictionary, anomaly: bool, rng: RandomNu
 	var count := rng.randi_range(170, 230) if anomaly else rng.randi_range(40, 60)
 	var spread := 7500.0 if anomaly else 2600.0
 	fields.append({"c": center, "r": spread * 1.3 + 600.0})
-	var placed := []
 	var giants := rng.randi_range(5, 9) if anomaly else rng.randi_range(1, 3)
+	var rocks := []  # [amount, size, giant]
 	for i in count + giants:
 		var giant := i >= count
 		var amount := rng.randi_range(40, 100) if anomaly else rng.randi_range(15, 100)
@@ -1405,11 +1433,24 @@ func _spawn_field(center: Vector3, sys: Dictionary, anomaly: bool, rng: RandomNu
 		if giant:  # a mountain of a rock with a lot of ore in it
 			amount = rng.randi_range(220, 380)
 			size = rng.randf_range(240.0, 420.0)
+		rocks.append([amount, size, giant])
+	# biggest first, so the smaller ones find room round them; a rock with nowhere clear to go is left out
+	# rather than buried inside another (where it could never be mined)
+	rocks.sort_custom(func(a, b): return a[1] > b[1])
+	var placed := []  # [position, size]
+	for r in rocks:
+		var amount: int = r[0]
+		var size: float = r[1]
+		var giant: bool = r[2]
 		var p := center
-		for _t in 20:
-			p = center + _ring_point(rng, 0.0 if giant else 60.0, spread * (0.6 if giant else 1.0), 450.0)
-			if placed.all(func(q): return q[0].distance_to(p) > q[1] + size + 60.0):
+		var clear := false
+		for _t in 60:
+			p = center + _ring_point(rng, 0.0 if giant else 60.0, spread * (0.6 if giant else 1.0), 450.0 + size)
+			if placed.all(func(q): return q[0].distance_to(p) > (q[1] + size) * 1.05 + 60.0):
+				clear = true
 				break
+		if not clear:
+			continue
 		placed.append([p, size])
 		var roll := Game.roll_ore(sys, anomaly) if only_ore == "" else [only_ore, rng.randi_range(1, 3)]
 		var a := Asteroid.new()
@@ -1793,34 +1834,68 @@ func target_info(t) -> Dictionary:
 	return {"name": "?", "icon": "radar", "color": Color.WHITE, "sub": "", "use": ""}
 
 
-## Everything worth listing here, nearest first: landmarks, ships, containers, ore veins and loose ore.
-## `cat` narrows it to one kind (all, places, ships, ore, loot); `minq` hides ore below that quality (veins
-## you haven't scanned yet count as unknown, so they only show with no quality filter).
-func overview_entries(limit: int, cat := "all", minq := -1) -> Array:
+## Everything worth listing on the overview: landmarks, ships, containers, ore veins and loose ore. `cat` narrows
+## it to one kind (all, places, ships, veins, loose, loot), `minq` hides ore below that quality and `ore` keeps
+## only that ore (veins you haven't scanned are unknown, so they only show unfiltered). `sort`: dist, name, ore
+## (rarest first), quality or size. Rows: {t, name, icon, color, dist, ore, q, size}.
+func overview_rows(cat := "all", minq := -1, ore := "", sort := "dist", reverse := false) -> Array:
 	var pp: Vector3 = player.position
 	var all := []
-	if cat in ["all", "places", "loot"]:
+	if cat in ["all", "places", "loot"] and ore == "" and minq < 0:
 		for lm in landmarks:
-			if cat != "loot" or lm.kind == "wreck":
+			if cat != "loot" or lm.kind in ["wreck", "relic"]:
 				all.append(lm)
-	var groups := {"all": ["pirates", "npcs", "crates", "asteroids", "chunks"], "places": [], "ships": ["pirates", "npcs"],
-		"ore": ["asteroids", "chunks"], "loot": ["crates"]}
-	for group in groups[cat]:
-		for n in get_tree().get_nodes_in_group(group):
-			if not n.visible or (group in ["asteroids", "chunks"] and n.position.distance_to(pp) > 12000.0):
+	var groups: Array = {"all": ["pirates", "npcs", "crates", "asteroids", "chunks"], "places": [], "ships": ["pirates", "npcs"],
+		"veins": ["asteroids"], "loose": ["chunks"], "ore": ["asteroids", "chunks"], "loot": ["crates"]}.get(cat, [])
+	var reach: float = 15000.0 + player.radius * 4.0
+	for group in groups:
+		var is_ore: bool = group in ["asteroids", "chunks"]
+		if (ore != "" or minq >= 0) and not is_ore:
+			continue
+		for n in group_nodes(group):
+			if not n.visible or (is_ore and n.position.distance_to(pp) > reach):
 				continue
-			if minq >= 0 and group == "asteroids" and (not n.scanned or n.quality < minq):
+			if group == "asteroids" and (ore != "" or minq >= 0) and not n.scanned:
 				continue
-			if minq >= 0 and group == "chunks" and n.quality < minq:
+			if is_ore and ((minq >= 0 and n.quality < minq) or (ore != "" and n.ore_id != ore)):
 				continue
 			all.append(n)
-	all.sort_custom(func(a, b): return pp.distance_squared_to(target_pos(a)) < pp.distance_squared_to(target_pos(b)))
 	var out := []
-	for t in all.slice(0, limit):
+	for t in all:
 		var info := target_info(t)
-		out.append({"t": t, "name": info.name, "icon": info.icon, "color": info.color})
+		var row := {"t": t, "name": info.name, "icon": info.icon, "color": info.color, "dist": pp.distance_to(target_pos(t)),
+			"ore": "", "q": -1, "size": target_size(t)}
+		if not t is Dictionary and (t.is_in_group("chunks") or (t.is_in_group("asteroids") and t.scanned)):
+			row.ore = t.ore_id
+			row.q = t.quality
+			row.size = t.amount if t.is_in_group("chunks") else t.remaining
+		out.append(row)
+	match sort:
+		"name": out.sort_custom(func(a, b): return a.name.naturalnocasecmp_to(b.name) < 0)
+		"ore": out.sort_custom(func(a, b): return _ore_rank(a) > _ore_rank(b) or (_ore_rank(a) == _ore_rank(b) and a.dist < b.dist))
+		"quality": out.sort_custom(func(a, b): return a.q > b.q or (a.q == b.q and a.dist < b.dist))
+		"size": out.sort_custom(func(a, b): return a.size > b.size or (a.size == b.size and a.dist < b.dist))
+		_: out.sort_custom(func(a, b): return a.dist < b.dist)
+	if reverse:
+		out.reverse()
 	return out
 
+
+## Rarer ore first (then better quality); things without ore last.
+func _ore_rank(row: Dictionary) -> float:
+	if row.ore == "":
+		return -1.0
+	return Game.ORES[row.ore].tier * 10.0 + float(Game.ORES[row.ore].has("region")) * 5.0 + row.q
+
+
+## The nodes in a group (all of them, this frame).
+func group_nodes(g: String) -> Array:
+	return get_tree().get_nodes_in_group(g)
+
+
+## Everything worth listing here, nearest first (the first `limit`): see overview_rows.
+func overview_entries(limit: int, cat := "all", minq := -1) -> Array:
+	return overview_rows(cat, minq).slice(0, limit)
 
 ## The thing on screen nearest the point `at` (screen pixels), if anything is close enough to it.
 func pick_at(at: Vector2):
@@ -1945,6 +2020,8 @@ func cancel_autopilot(why := "") -> void:
 func autopilot_text() -> String:
 	if autopilot.is_empty():
 		return ""
+	if autopilot.mode == "launch":
+		return "Launching"
 	var pw := "" if ap_power >= 0.999 else "   (power %d%%)" % roundi(ap_power * 100.0)
 	if autopilot.mode == "collect":
 		return "Collecting loose ore  -  %d pieces in reach%s" % [get_tree().get_nodes_in_group("chunks").filter(
@@ -1960,8 +2037,10 @@ func autopilot_text() -> String:
 		"orbit": return "Orbiting at %s%s" % [UI.dist(autopilot.range), pw]
 		"dock":
 			var goal := _dock_goal(autopilot.target)
-			return "%s%s  -  %s to the %s%s" % [drive, "Docking approach" if autopilot.target.kind == "station" else "Gate approach",
-				UI.dist(player.position.distance_to(goal)), "pad" if goal == autopilot.target.bay.pad else "approach lane", pw]
+			var what: String = {"out": "backing away to go round", "lane": "to the approach lane", "align": "lining up",
+				"in": "going in"}.get(autopilot.get("stage", "lane"), "")
+			return "%s%s  -  %s  -  %s%s" % [drive, "Docking" if autopilot.target.kind == "station" else "Gate", what,
+				UI.dist(player.position.distance_to(goal)), pw]
 		"use": return "%sApproaching to %s  -  %s to go%s" % [drive, target_info(autopilot.target).use.to_lower(), left, pw]
 	return "%sApproaching  -  %s to go%s" % [drive, left, pw]
 
@@ -1995,6 +2074,16 @@ func _nearest_chunk():
 
 ## Steers (by swinging the aim, which the ship follows) and works the throttle and cruise drive.
 func _update_autopilot(delta: float) -> void:
+	if autopilot.mode == "launch":
+		var bay: Dictionary = station_lm().get("bay", {})
+		autopilot.t += delta
+		player.throttle = 0.0
+		player.cruise_v = player.top_speed() * CRUISE_MULT * clampf(autopilot.t / 0.35, 0.15, 1.0)
+		_steer_to(autopilot.out, delta)
+		if bay.is_empty() or (player.position - bay.mouth).dot(bay.out) > 150.0 + player.radius or autopilot.t > 6.0:
+			autopilot = {}
+			player.cruise_v = 0.0  # (out of cruise the extra speed bleeds off over a couple of seconds)
+		return
 	if autopilot.mode == "collect":
 		if Game.cargo_used() >= player.st.cargo:
 			cancel_autopilot("Cargo hold full")
@@ -2027,21 +2116,7 @@ func _update_autopilot(delta: float) -> void:
 					else:
 						t.action.call()
 		"dock":
-			var goal := _dock_goal(t)
-			if goal == t.bay.pad:
-				# lined up on the bay (or the gate's bore): straight in, fast, slowing onto the pad - a gate fires
-				# you on through at cruising speed anyway
-				var to: Vector3 = goal - player.position
-				var d := to.length()
-				var station: bool = t.kind == "station"
-				player.throttle = 0.0
-				player.cruise_v = clampf(d * (0.7 if station else 1.0), top * (0.7 if station else 2.0),
-					top * (4.0 if station else CRUISE_MULT) * ap_power)
-				if player.forward().dot(to / maxf(d, 0.01)) < 0.9:
-					player.cruise_v = maxf(top * 0.4, player.cruise_v * 0.4)  # get the nose on it first
-				_steer_to(to / maxf(d, 0.01), delta)
-			else:
-				_drive(goal, 0.0, delta, true, true)
+			_update_dock(t, delta)
 		"orbit":
 			var to: Vector3 = target_pos(t) - player.position
 			var d := to.length()
@@ -2051,6 +2126,58 @@ func _update_autopilot(delta: float) -> void:
 			player.throttle = 0.8 * ap_power
 			player.cruise_v = 0.0
 			_steer_to(dir, delta)
+
+
+## Docking (or flying into a gate) by stages: see _dock_stage.
+func _update_dock(lm: Dictionary, delta: float) -> void:
+	var bay: Dictionary = lm.bay
+	var top: float = player.top_speed()
+	if not autopilot.has("stage"):
+		autopilot["stage"] = _dock_stage(lm)
+	var p: Vector3 = player.position
+	var rel: Vector3 = p - bay.mouth
+	var along: float = rel.dot(bay.out)
+	var lateral: float = (rel - bay.out * along).length()
+	var into: Vector3 = -bay.out
+	match autopilot.stage:
+		"out":
+			var goal := _dock_goal(lm)
+			player.cruise_v = 0.0
+			if _drive(goal, 0.0, delta, false, true) < 60.0 or p.distance_to(lm.pos) > bay.clear + player.radius + 150.0:
+				autopilot.stage = "lane"
+		"lane":
+			var goal := _dock_goal(lm)
+			var left := _drive(goal, 0.0, delta)
+			if left < maxf(40.0, top * 1.2):
+				autopilot.stage = "align"
+				autopilot["engaged"] = false
+				player.cruise_v = 0.0
+		"align":
+			# hold still, nose round to face straight in; drift back onto the lane point if pushed off it
+			player.cruise_v = 0.0
+			var hold: Vector3 = _dock_goal(lm) - p
+			player.throttle = 0.0
+			player.vel = player.vel.move_toward(hold.limit_length(top * 0.5), top * 0.8 * delta)
+			_steer_to(into, delta * 1.5)
+			if player.forward().dot(into) > 0.996 and player.vel.length() < top * 0.6:
+				autopilot.stage = "in"
+		"in":
+			# straight down the axis: aim at a point on it a little ahead, so any sideways error closes smoothly
+			var station: bool = lm.kind == "station"
+			var goal := _dock_goal(lm)
+			var end_along: float = (goal - bay.mouth).dot(bay.out)
+			var ahead: float = maxf(end_along, along - 120.0 - player.radius) if station else along - 150.0
+			var aim_pt: Vector3 = bay.mouth + bay.out * ahead
+			var to: Vector3 = aim_pt - p
+			var d := p.distance_to(goal)
+			player.throttle = 0.0
+			player.cruise_v = clampf(d * (0.7 if station else 1.0), top * (0.6 if station else 2.0),
+				top * (4.0 if station else CRUISE_MULT) * ap_power)
+			if player.forward().dot(to.normalized()) < 0.9:
+				player.cruise_v = maxf(top * 0.4, player.cruise_v * 0.4)  # get the nose on it first
+			_steer_to(to.normalized(), delta)
+			if lateral > 220.0 or along > _lane_dist(lm) * 2.0:
+				autopilot.stage = _dock_stage(lm)  # knocked well off the line: start the approach again
 
 
 ## The autopilot's one way of getting somewhere. It turns onto the line, opening the throttle as the nose
@@ -2571,10 +2698,16 @@ func _update_travel(delta: float) -> void:
 				var g: Dictionary = travel.gate
 				var into: Vector3 = -g.out
 				if not travel.has("rail_a"):
-					var left: float = GateField.MOUTH + GateField.MUZZLE + 20.0 - (player.position - g.mouth).dot(into)
-					travel.rail_a = 2.0 * maxf(left, 60.0) / (travel.charge * travel.charge)
+					# keep the speed you came in with (the autopilot flies in at cruising speed) and add to it, so
+					# the ship leaves the muzzle just as the charge completes
+					var left: float = maxf(GateField.MOUTH + GateField.MUZZLE + 20.0 - (player.position - g.mouth).dot(into), 60.0)
+					var v0: float = maxf(0.0, player.vel.dot(into))
+					if v0 * travel.charge > left * 0.8:
+						travel.charge = maxf(0.4, left * 0.8 / maxf(v0, 1.0))  # coming in fast: a shorter, harder shot
+					travel.rail_v0 = v0
+					travel.rail_a = maxf(0.0, 2.0 * (left - v0 * travel.charge) / (travel.charge * travel.charge))
 					g.gate.launch(travel.charge)
-				player.vel = into * travel.rail_a * travel.t - _off_axis(g) * 4.0
+				player.vel = into * (travel.rail_v0 + travel.rail_a * travel.t) - _off_axis(g) * 4.0
 				_scroll_speed = WARP_SCROLL_MAX * 0.4 * k * k
 			else:
 				# the charge is the acceleration: the drive drags the ship forward harder and harder and the world
@@ -2743,6 +2876,9 @@ func open_station(loc: Dictionary) -> void:
 	player.stop()
 	player.heal_full()
 	Game.home = [Game.current_system, Game.current_loc]
+	Game.docked = true
+	if Game.auto_store and Game.store_all() > 0:
+		Game.say("Everything you were carrying went into station storage (it's safe there).", Color("8cd8ff"))
 	Sfx.play("dock", -4.0)
 	var key := "%d:%d" % [Game.current_system, Game.current_loc]
 	var got := Game.collect(key)
@@ -2763,6 +2899,8 @@ func open_panel(kind: String, loc: Dictionary) -> void:
 
 func close_panel() -> void:
 	station_ui.hide()
+	Game.docked = false
+	_from_dock = false
 	var was_docked := mode == "docked"
 	mode = "fly"
 	if was_docked and not _docked_bay.is_empty():
@@ -2788,17 +2926,52 @@ func _launched(out: Vector3) -> void:
 	if mode == "launching":
 		mode = "fly"
 		player.vel = out * 5.0
+		# the clamps let go and the ship is fired out of the bay at cruising speed until it's clear of the mouth
+		autopilot = {"mode": "launch", "out": out, "t": 0.0}
+		Sfx.play("warp", -8.0, 1.6)
+
+
+## Open a map or menu: in flight, or over the station when docked (closing it then goes back to the station).
+func open_menu(which: String) -> void:
+	if not mode in ["fly", "docked"]:
+		return
+	_from_dock = mode == "docked"
+	if _from_dock:
+		station_ui.hide()
+	match which:
+		"galaxy":
+			mode = "map"
+			galaxy_map.open()
+		"system":
+			mode = "map"
+			system_map.open()
+		"inventory", "guide":
+			mode = "inventory"
+			inventory.open("guide" if which == "guide" else "")
+		"fitting":
+			mode = "fitting"
+			fitting.open()
+
+
+## A menu opened at the station has closed: back to the station's own menus.
+func _back_to_dock() -> bool:
+	if not _from_dock:
+		return false
+	_from_dock = false
+	mode = "docked"
+	station_ui.reshow()
+	return true
 
 
 func close_inventory() -> void:
 	inventory.hide()
-	if mode == "inventory":
+	if mode == "inventory" and not _back_to_dock():
 		mode = "fly"
 
 
 func close_fitting() -> void:
 	fitting.hide()
-	if mode == "fitting":
+	if mode == "fitting" and not _back_to_dock():
 		mode = "fly"
 
 
@@ -2824,7 +2997,7 @@ func near_field(p: Vector3) -> bool:
 func close_maps() -> void:
 	galaxy_map.hide()
 	system_map.close()
-	if mode == "map":
+	if mode == "map" and not _back_to_dock():
 		mode = "fly"
 
 
@@ -2832,6 +3005,8 @@ func player_died() -> void:
 	if mode == "dead":
 		return
 	mode = "dead"
+	Game.docked = false
+	_from_dock = false
 	travel = {}
 	_scroll_speed = 0.0
 	_rush = Vector3.ZERO
@@ -2849,13 +3024,10 @@ func player_died() -> void:
 	cancel_autopilot()
 	stop_auto()
 	Game.event("death")
-	# out past the stations (Unsecure and Wild space) your cargo goes with the ship; nearer home it's recovered
-	if current_sys().cat >= Game.CAT_RED:
-		Game.cargo.clear()
-		Game.say("Your ship was destroyed! Your cargo is lost.", UI.BAD)
-	else:
-		Game.say("Your ship was destroyed! Salvage crews recovered your cargo.", UI.BAD)
-	Game.changed.emit()
+	# everything the ship carried goes with it; only what's in station storage is safe
+	var lost := Game.lose_carried()
+	Game.say("Your ship was destroyed!%s" % ("" if lost == "" else " Lost: %s. Only what's in station storage is safe." % lost),
+		UI.BAD)
 	await get_tree().create_timer(3.0).timeout
 	_flash(1.0)
 	_respawn()

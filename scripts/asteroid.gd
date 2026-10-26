@@ -16,7 +16,6 @@ var scanned := false
 var _acc := 0.0
 var _spin_axis := Vector3.UP
 var _spin := 0.0
-var _drift := Vector3.ZERO
 var _hit_t := 0.0
 var _mesh: MeshInstance3D
 var _mat: ShaderMaterial
@@ -44,8 +43,7 @@ func setup(ore: String, q: int, amount: int, rock_seed: int, size: float) -> voi
 	add_child(_mesh)
 	rotation = Vector3(rng.randf() * TAU, rng.randf() * TAU, rng.randf() * TAU)
 	_spin_axis = Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), rng.randf_range(-1, 1)).normalized()
-	_spin = rng.randf_range(-0.04, 0.04)  # big rocks turn slowly
-	_drift = Vector3(rng.randf_range(-1, 1), rng.randf_range(-0.3, 0.3), rng.randf_range(-1, 1)) * 0.15
+	_spin = rng.randf_range(-0.04, 0.04)  # big rocks turn slowly (but stay put, so neighbours never drift into each other)
 	add_to_group("asteroids")
 	_resize()
 
@@ -65,7 +63,6 @@ func _resize() -> void:
 
 func _process(delta: float) -> void:
 	rotate(_spin_axis, _spin * delta)
-	position += _drift * delta
 	if _hit_t > 0.0:
 		_hit_t = maxf(0.0, _hit_t - delta * 6.0)
 		_mat.set_shader_parameter("hit", _hit_t * 0.06)
@@ -93,9 +90,10 @@ func hit(power: float, dir: Vector3, collect := 0.0) -> void:
 		if collect > 0.0 and randf() < collect and Game.add_cargo(ore_id, quality, amount):
 			Sfx.play("pickup", -16.0, randf_range(1.0, 1.15))
 			continue
-		# pieces break off the side you're shooting at
+		# pieces break off the side you're shooting at, just clear of the surface (never inside the rock, where
+		# they couldn't be reached)
 		var out := (-dir + Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 0.45).normalized()
-		main.spawn_chunk(ore_id, quality, amount, position + out * radius * 0.9, out * randf_range(6.0, 12.0) - dir * 3.0)
+		main.spawn_chunk(ore_id, quality, amount, position + out * (radius + 4.0), out * randf_range(6.0, 12.0) - dir * 3.0)
 	if remaining <= 0:
 		main.explosion(position, minf(radius / 6.0, 6.0), Game.ORES[ore_id].color, true)
 		queue_free()
