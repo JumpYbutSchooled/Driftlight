@@ -18,8 +18,84 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--skies" in OS.get_cmdline_user_args():
+		_skies()
 	else:
 		_run()
+
+
+## `-- --autoshot --skies`: the sky of a few systems (or `--only=<ids>`), toward the great nebula and toward
+## the star; then a warp across The Core, to see the star swing round.
+func _skies() -> void:
+	await _secs(1.0)
+	main.start_new_game()
+	await _secs(1.0)
+	var ids := [0, 7, 61, 150, 333, 512, 700, 901]
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--only="):
+			ids = Array(a.substr(7).split(",")).map(func(s): return int(s))
+	Game.peaceful = true
+	await _sky_shots(ids, "sky")
+	# the system map draws the last one's star in its own colour and size
+	main.mode = "map"
+	main.system_map.open()
+	await _secs(0.6)
+	await _shot("sky_system_map")
+	main.close_maps()
+	await _warp_star()
+	get_tree().quit()
+
+
+func _sky_shots(ids: Array, prefix: String) -> void:
+	for id in ids:
+		var sys: Dictionary = Game.systems[id]
+		var li := 0
+		for k in sys.locs.size():
+			if sys.locs[k].kind == "planet":
+				li = k
+				break
+		main.enter_location(id, li)
+		main._pirate_timer = -1.0
+		var look: Dictionary = Game.system_look(sys)
+		main.ui_layer.visible = false
+		main.cam_look(look.neb_dir, true)
+		await _secs(1.0)
+		await _shot("%s_%d_nebula" % [prefix, id])
+		main.cam_look(main.sun_dir_world, true)
+		await _secs(0.6)
+		await _shot("%s_%d_star" % [prefix, id])
+		main.ui_layer.visible = true
+		print("sky %d %s (%s): %s%s, nebula %.2f, star %.1f deg across" % [id, sys.name, Game.CAT_NAMES[sys.cat], look.star,
+			" (binary)" if look.binary else "", look.nebula, rad_to_deg(main.star_mat.get_shader_parameter("star_rad")) * 2.0])
+
+
+## Warp across The Core and watch the star: it should swing round (and grow or shrink) as you cross.
+func _warp_star() -> void:
+	main.enter_location(0, 0)
+	await _secs(0.5)
+	var sys: Dictionary = Game.systems[0]
+	var best := 1
+	for k in sys.locs.size():
+		if sys.locs[k].map_pos.distance_to(sys.locs[0].map_pos) > sys.locs[best].map_pos.distance_to(sys.locs[0].map_pos):
+			best = k
+	var d0: Vector3 = main.sun_dir_world
+	var r0: float = main.star_mat.get_shader_parameter("star_rad")
+	main.start_warp(best)
+	while main.travel.get("phase", "") != "travel" and main.mode == "warp":
+		await get_tree().process_frame
+	await _secs(main.travel.travel * 0.5)
+	var dm: Vector3 = main.sun_dir_world
+	main.ui_layer.visible = false
+	main.cam_look(dm, true)
+	await _secs(0.1)
+	await _shot("sky_warp_mid")
+	main.ui_layer.visible = true
+	while main.mode != "fly":
+		await get_tree().process_frame
+	var d1: Vector3 = main.sun_dir_world
+	var r1: float = main.star_mat.get_shader_parameter("star_rad")
+	print("warp across the Core: star swung %.0f deg (%.0f by halfway), %.2f -> %.2f deg across" % [rad_to_deg(d0.angle_to(d1)),
+		rad_to_deg(d0.angle_to(dm)), rad_to_deg(r0) * 2.0, rad_to_deg(r1) * 2.0])
 
 
 ## `-- --autoshot --gallery`: every ship model close up under the game's own lighting: three-quarter front
@@ -817,5 +893,10 @@ func _run() -> void:
 	main.mode = "fly"
 	print("content: %d ships, %d weapons, %d modules, %d ores, %d achievements" % [Game.SHIPS.size(), Game.WEAPONS.size(),
 		Game.MODULES.size(), Game.ORES.size(), Game.ACHIEVEMENTS.size()])
+	# a few systems' skies, and the star swinging round in a warp
+	Game.peaceful = true
+	await _sky_shots([7, 333, 901], "17_sky")
+	await _warp_star()
+	Game.peaceful = false
 	print("audio peaks over the tour: music %.1f dB, sfx %.1f dB" % [_peaks.Music, _peaks.SFX])
 	get_tree().quit()

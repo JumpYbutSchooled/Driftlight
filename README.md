@@ -1,9 +1,10 @@
 # Driftlight
 
-A dark, dusty space exploration game: fly a boxy little mining ship through a galaxy of 1,000 systems in ten
-regions, mine huge ore veins, refine ore in station furnaces, climb a ladder of 54 ships from a skiff to
-kilometre-long capital ships, and survive the pirates of Wild space. Made with Godot 4.7, with every ship,
-turret, station and prop modelled in Blender from scripts.
+A space exploration game: fly a boxy little mining ship through a galaxy of 1,000 systems in ten regions, each
+under a sky of its own - its own star (red dwarfs, blue giants, binaries) and its own colourful nebulae. Mine
+huge ore veins, refine ore in station furnaces, climb a ladder of 54 ships from a skiff to kilometre-long
+capital ships, and survive the pirates of Wild space. Made with Godot 4.7, with every ship, turret, station and
+prop modelled in Blender from scripts.
 
 ## Download and play (Windows)
 

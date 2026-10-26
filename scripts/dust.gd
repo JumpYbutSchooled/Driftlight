@@ -21,6 +21,7 @@ var dir := Vector3.FORWARD
 var _base := []
 var _puff_base := []
 var _puffs: MultiMeshInstance3D
+var _puff_mat: StandardMaterial3D
 var _mat: ShaderMaterial
 var _hist := []  # [time, camera position + scroll], newest last, the last half second or so
 var _vel := Vector3.ZERO
@@ -63,6 +64,7 @@ func _ready() -> void:
 	pmat.distance_fade_min_distance = 60.0
 	pmat.distance_fade_max_distance = 260.0
 	q.material = pmat
+	_puff_mat = pmat
 	pm.mesh = q
 	_puffs = MultiMeshInstance3D.new()
 	_puffs.multimesh = pm
@@ -70,6 +72,12 @@ func _ready() -> void:
 	add_child(_puffs)
 	for i in PUFFS:
 		_puff_base.append([Vector3(rng.randf(), rng.randf(), rng.randf()) * PUFF_BOX, rng.randf_range(150.0, 420.0)])
+
+
+## The system's colours: the motes catch its star's light, the big puffs glow faintly like its nebulae.
+func set_colors(star: Color, glow: Color) -> void:
+	_mat.set_shader_parameter("color", Color(star.lerp(Color(0.85, 0.8, 0.72), 0.5), 0.22))
+	_puff_mat.albedo_color = Color(Color(0.3, 0.27, 0.24).lerp(glow, 0.4), 0.05)
 
 
 ## A thin strip of POINTS pairs of vertices: x -1/+1 across it, z 0 (the mote) to 1 (the end of its trail).

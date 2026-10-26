@@ -209,7 +209,7 @@ func _draw() -> void:
 		var reg: Dictionary = Game.REGIONS[h.region]
 		var hp := _to_screen(h.pos) + Vector2(18, -10)
 		var lines := [h.name, "%s System  -  %s" % [Game.CAT_NAMES[h.cat], reg.name]]
-		lines.append("Visited" if h.visited else "Unexplored")
+		lines.append(("Visited" if h.visited else "Unexplored") + "  -  " + Game.system_look(h).star)
 		if reg.ore != "" and Game.regions_seen.has(h.region):
 			lines.append("Regional ore: %s" % Game.ORES[reg.ore].name)
 		if hovered != Game.current_system:

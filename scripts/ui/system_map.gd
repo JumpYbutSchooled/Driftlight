@@ -142,9 +142,20 @@ func _draw() -> void:
 	draw_string(font, Vector2(24, 80), "Probes follow your mouse. Fly one over a planet to scan it. Near a hidden anomaly the beeping speeds up and the trail turns red.   N / Esc: close",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("8090a8"))
 
-	_pix_circle(center, 34.0, Color(1.0, 0.85, 0.5, 0.15))
-	_pix_circle(center, 22.0, Color("ffd27a"))
-	_pix_circle(center, 12.0, Color("fff3c4"))
+	# the star, in its own colour and size (and its companion, in a binary)
+	var lk: Dictionary = Game.system_look(sys)
+	var stc: Color = lk.star_color
+	var sr := clampf(18.0 * sqrt(lk.star_size), 9.0, 42.0)
+	_pix_circle(center, sr * 1.55, Color(stc, 0.15))
+	_pix_circle(center, sr, stc.lerp(Color.WHITE, 0.15))
+	_pix_circle(center, sr * 0.55, stc.lerp(Color.WHITE, 0.7))
+	var below := sr * 1.55  # (the name goes under the star and its companion)
+	if lk.binary:
+		var off := Vector2.from_angle(lk.yaw * 3.0) * (sr + 26.0)
+		var cc2: Color = lk.companion_color
+		_pix_circle(center + off, 8.0, cc2.lerp(Color.WHITE, 0.3))
+		below = maxf(below, off.y + 10.0)
+	draw_string(font, center + Vector2(-150, below + 20.0), lk.star, HORIZONTAL_ALIGNMENT_CENTER, 300, 14, stc)
 	for l in sys.locs:
 		if l.kind == "planet":
 			draw_arc(center, l.map_pos.length() * _scale(), 0.0, TAU, 128, Color(1, 1, 1, 0.06), 2.0)

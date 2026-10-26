@@ -7,7 +7,7 @@ signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 signal jettisoned(ore: String, q: int, n: int)  # cargo thrown out of the hold (main spawns it as loose chunks)
 
-const VERSION := 5  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 6  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots: your pilot, and a sandbox where everything is free (anyone can open it)
 const SLOTS := {"pilot": "user://driftlight_save.json", "sandbox": "user://driftlight_admin.json"}
@@ -919,6 +919,68 @@ static func region_at(p: Vector2, cat: int) -> int:
 	var n: int = REGION_COUNT[cat]
 	var a := fposmod(atan2(p.y, p.x) + REGION_TWIST[cat], TAU)
 	return REGION_FIRST[cat] + mini(floori(a / (TAU / n)), n - 1)
+
+
+# Stars, by kind: [name, colour, size (sun = 1), light, chance]. A system's star sits at its centre.
+const STAR_KINDS := [
+	["Red dwarf", Color(1.0, 0.5, 0.32), 0.55, 1.5, 30],
+	["Orange star", Color(1.0, 0.72, 0.45), 0.8, 1.85, 20],
+	["Yellow star", Color(1.0, 0.92, 0.78), 1.0, 2.1, 18],
+	["White star", Color(0.93, 0.96, 1.0), 1.25, 2.35, 12],
+	["Blue giant", Color(0.62, 0.76, 1.0), 2.0, 2.7, 7],
+	["Red giant", Color(1.0, 0.42, 0.22), 4.2, 1.8, 6],
+	["White dwarf", Color(0.85, 0.92, 1.0), 0.28, 1.6, 4],
+	["Yellow giant", Color(1.0, 0.82, 0.5), 2.8, 2.2, 3],
+]
+# Nebula palettes, after real ones: each [glowing gas, second gas, filaments / dust glow]
+const NEBULA_PALETTES := [
+	[Color(1.0, 0.24, 0.36), Color(0.18, 0.74, 0.82), Color(0.95, 0.62, 0.3)],  # emission: hydrogen red, oxygen teal, gold
+	[Color(0.95, 0.3, 0.62), Color(0.33, 0.5, 1.0), Color(1.0, 0.72, 0.48)],  # orion
+	[Color(1.0, 0.55, 0.2), Color(0.22, 0.7, 0.68), Color(0.75, 0.16, 0.16)],  # carina
+	[Color(0.3, 0.55, 1.0), Color(0.56, 0.36, 0.96), Color(0.78, 0.88, 1.0)],  # reflection
+	[Color(0.2, 0.88, 0.95), Color(1.0, 0.3, 0.26), Color(0.62, 0.32, 0.92)],  # veil
+	[Color(0.96, 0.74, 0.34), Color(0.3, 0.8, 0.56), Color(0.78, 0.32, 0.16)],  # eagle
+	[Color(1.0, 0.36, 0.46), Color(0.82, 0.12, 0.22), Color(1.0, 0.86, 0.62)],  # rosette
+	[Color(1.0, 0.46, 0.66), Color(0.46, 0.7, 1.0), Color(0.76, 0.56, 1.0)],  # lagoon
+	[Color(0.58, 0.4, 0.28), Color(0.92, 0.56, 0.26), Color(0.36, 0.46, 0.72)],  # dark dust
+	[Color(0.72, 0.3, 1.0), Color(1.0, 0.2, 0.72), Color(0.2, 0.8, 1.0)],  # wild violet
+]
+# how likely each palette is, by kind of space (Core, Secure, Unsecure, Wild)
+const PALETTE_WEIGHTS := [[3, 3, 1, 5, 1, 3, 1, 4, 5, 0], [4, 4, 3, 3, 3, 4, 3, 3, 3, 1], [5, 3, 5, 1, 4, 3, 5, 2, 3, 2],
+	[3, 3, 3, 2, 4, 2, 3, 3, 2, 6]]
+var _looks := {}
+
+
+## How a system looks: its star, the colours of its nebulae and where they lie in its sky, the galactic band.
+## The same every time (worked out from its id).
+func system_look(sys: Dictionary) -> Dictionary:
+	var id: int = sys.id
+	if _looks.has(id):
+		return _looks[id]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = id * 7919 + 13
+	var kinds := STAR_KINDS.map(func(k): return k[4])
+	var k: Array = STAR_KINDS[pick_weighted(kinds, rng)] if id != 0 else STAR_KINDS[2]
+	var pal: Array = NEBULA_PALETTES[pick_weighted(PALETTE_WEIGHTS[sys.cat], rng)]
+	var shift := rng.randf_range(-0.04, 0.04)  # a little hue shift of its own
+	var cols := pal.map(func(c): return Color.from_hsv(fposmod(c.h + shift, 1.0), c.s, c.v))
+	var look := {"star": k[0], "star_color": k[1], "star_size": k[2] * rng.randf_range(0.85, 1.15), "star_light": k[3],
+		"binary": rng.randf() < 0.12, "c1": cols[0], "c2": cols[1], "c3": cols[2],
+		"nebula": rng.randf_range(0.35, 1.25) * (1.25 if sys.cat == CAT_PURPLE else 1.0),
+		"neb_dir": Vector3(rng.randf_range(-1, 1), rng.randf_range(-0.6, 0.8), rng.randf_range(-1, 1)).normalized(),
+		"neb_size": rng.randf_range(0.15, 0.6), "neb_dir2": Vector3(rng.randf_range(-1, 1), rng.randf_range(-0.8, 0.8),
+		rng.randf_range(-1, 1)).normalized(), "neb_size2": rng.randf_range(0.55, 0.85),
+		"band_axis": Vector3(rng.randf_range(-1, 1), rng.randf_range(0.3, 1.0), rng.randf_range(-1, 1)).normalized(),
+		"band": rng.randf_range(0.6, 1.4), "stars": rng.randf_range(0.7, 1.4), "seed": rng.randf() * 100.0,
+		"yaw": rng.randf() * TAU, "tilt": rng.randf_range(0.05, 0.4), "turb": rng.randf_range(1.6, 3.4),
+		"lanes": rng.randf_range(0.35, 0.95)}
+	if look.binary:
+		var c2: Array = STAR_KINDS[pick_weighted(kinds, rng)]
+		look["companion_color"] = c2[1]
+		look["companion_size"] = minf(c2[2], 1.2) * rng.randf_range(0.5, 0.9)
+		look["star"] += " + " + c2[0].to_lower()
+	_looks[id] = look
+	return look
 
 
 func _cell(p: Vector2, size: float) -> Vector2i:

@@ -32,6 +32,7 @@ const TargetPanel = preload("res://scripts/ui/target_panel.gd")
 const RING_SHADER = preload("res://shaders/planet_ring.gdshader")
 const CursorFx = preload("res://scripts/cursor.gd")
 const SKY_SHADER = preload("res://shaders/sky.gdshader")
+const STAR_SHADER = preload("res://shaders/star.gdshader")
 const PLANET_SHADER = preload("res://shaders/planet.gdshader")
 const ATMO_SHADER = preload("res://shaders/atmosphere.gdshader")
 const TUNNEL_SHADER = preload("res://shaders/warp_tunnel.gdshader")
@@ -146,6 +147,10 @@ var target_panel
 var warp_fx
 var _zoom_to := 1.0
 var sun_dir_world := Vector3.UP  # towards this system's sun
+var star_mat: ShaderMaterial  # the system's star (shaders/star.gdshader)
+var _look := {}  # how this system looks (Game.system_look)
+var _obs := Vector3.ZERO  # where you are relative to the system's star, in system-map units (y: below its plane)
+var _atmo: ShaderMaterial  # the planet's atmosphere (lit from the star)
 var _scan_cd := 0.0
 var _cam_q := Quaternion.IDENTITY  # where the mouse has swung the camera to: it orbits the ship freely, any way up
 var _cam_view := Quaternion.IDENTITY  # the camera's actual turn, easing after _cam_q
@@ -309,9 +314,9 @@ func _build_environment() -> void:
 	env.ssao_power = 1.6
 	env.ssao_detail = 0.6
 	env.ssao_light_affect = 0.35
-	# muted, slightly hard colour
+	# slightly hard colour
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 0.78
+	env.adjustment_saturation = 0.92
 	env.adjustment_contrast = 1.08
 	env.adjustment_brightness = 0.98
 	# a thin haze of dust: things kilometres off fade a little, giving a sense of distance
@@ -339,6 +344,17 @@ func _build_environment() -> void:
 	sun.shadow_bias = 0.04
 	sun.shadow_normal_bias = 3.0  # no shadow acne striping flat hull plates
 	add_child(sun)
+	# the system's star: a quad the shader holds far out along the star's direction from the camera
+	var star := MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = Vector2(2, 2)
+	star.mesh = q
+	star_mat = ShaderMaterial.new()
+	star_mat.shader = STAR_SHADER
+	star.material_override = star_mat
+	star.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	star.custom_aabb = AABB(Vector3.ONE * -1.0e7, Vector3.ONE * 2.0e7)  # it's wherever the camera is
+	add_child(star)
 	# light thrown back off the planet: a faint fill in its colour from its side (set in _make_planet)
 	fill = DirectionalLight3D.new()
 	fill.light_energy = 0.0
@@ -853,6 +869,7 @@ func _update_screen_fx(delta: float) -> void:
 	if backdrop.get_child_count() > 0:
 		# the planet is far away and barely moves, until you warp: then it's left behind fast
 		backdrop.position = -(warp_scroll - _scroll_base) * 3.0 - _rush
+	_update_star()
 
 
 func hurt(amount: float) -> void:
@@ -1175,25 +1192,87 @@ func _ring_point(rng: RandomNumberGenerator, rmin: float, rmax: float, h: float)
 	var r := rng.randf_range(rmin, rmax)
 	return Vector3(cos(a) * r, rng.randf_range(-h, h), sin(a) * r)
 
-## Sky tint, sun direction and colour for this system (the same every visit).
+## This system's sky (Game.system_look: the same every visit): its nebulae and galactic band, its star's
+## colour and light, and the ambient light and dust colours that go with them.
 func _set_sky(sys: Dictionary, loc: Dictionary) -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = sys.id * 31 + 7
-	var tint: Color = Game.CAT_COLORS[sys.cat]
-	var a := rng.randf() * TAU
-	var sun_dir := Vector3(cos(a), rng.randf_range(0.12, 0.55), sin(a)).normalized()
-	var sun_col := Color("fff1dc").lerp(tint, 0.12)
-	sun_dir_world = sun_dir
-	sky_mat.set_shader_parameter("band_axis", Vector3(rng.randf_range(-1, 1), rng.randf_range(0.3, 1.0), rng.randf_range(-1, 1)).normalized())
-	sky_mat.set_shader_parameter("tint", tint)
-	sky_mat.set_shader_parameter("tint2", tint.lerp(Color("ff7de9"), 0.55))
-	sky_mat.set_shader_parameter("sun_dir", sun_dir)
-	sky_mat.set_shader_parameter("sun_color", sun_col)
-	sky_mat.set_shader_parameter("nebula", 1.3 if loc.kind == "anomaly" else 1.0)
-	sun.global_basis = Basis.looking_at(-sun_dir, Vector3.UP)
-	sun.light_color = sun_col
-	env.ambient_light_color = Color(0.2, 0.22, 0.27).lerp(tint, 0.12)
-	env.fog_light_color = Color(0.075, 0.068, 0.062).lerp(tint * 0.1, 0.25)
+	_look = Game.system_look(sys)
+	for k in ["c1", "c2", "c3", "neb_dir", "neb_size", "neb_dir2", "neb_size2", "band_axis", "band", "turb", "lanes", "seed"]:
+		sky_mat.set_shader_parameter(k, _look[k])
+	sky_mat.set_shader_parameter("nebula", _look.nebula * (1.3 if loc.kind == "anomaly" else 1.0))
+	sky_mat.set_shader_parameter("star_density", _look.stars)
+	var axis: Vector3 = _look.band_axis
+	var yaw: float = _look.yaw
+	sky_mat.set_shader_parameter("core_dir", axis.cross(Vector3(cos(yaw), 0.0, sin(yaw))).normalized())
+	var sc: Color = _look.star_color
+	star_mat.set_shader_parameter("star_color", sc)
+	star_mat.set_shader_parameter("comp_color", _look.get("companion_color", sc))
+	sun.light_color = sc.lerp(Color.WHITE, 0.4)
+	var neb: Color = (_look.c1 as Color).lerp(_look.c2, 0.5)
+	env.ambient_light_color = Color(0.2, 0.22, 0.27).lerp(neb, 0.3).lerp(sc, 0.15)
+	env.fog_light_color = Color(0.07, 0.065, 0.06).lerp(neb * 0.25, 0.4)
+	dust.set_colors(sc, _look.c3)
+	var p: Vector2 = loc.map_pos
+	_obs = Vector3(p.x, -_star_height(), p.y)
+	_update_star()
+
+
+## How far below the plane of its star's system you see it from (system-map units): it stands that high
+## in your sky.
+func _star_height() -> float:
+	var tilt: float = _look.get("tilt", 0.2)
+	return 0.08 + tilt * 0.5
+
+
+## Where you are relative to the system's star, in system-map units (it sits at the centre of the system
+## map; `_obs` is where you are now): partway across in a warp; in a jump, carried off into the dark, then
+## sweeping in toward the new star as you arrive.
+func _star_obs() -> Vector3:
+	if travel.is_empty():
+		return _obs
+	var hd: Vector3 = travel.heading
+	match travel.kind:
+		"warp":
+			if travel.phase == "travel" and travel.has("obs_to"):
+				var s: float = smoothstep(0.0, 1.0, travel.t / travel.travel)
+				return _obs.lerp(travel.obs_to, s)
+		"jump", "wormhole":
+			if travel.phase == "travel":
+				var s: float = clampf(travel.t / travel.travel, 0.0, 1.0)
+				return _obs + hd * s * s * 6.0
+			if travel.phase == "exit":
+				return _obs - hd * _rush.length() / 30000.0 * 2.0
+	return _obs
+
+
+## Put the star where it is from here (see _star_obs): its direction and size in the sky, and the light
+## falling from it.
+func _update_star() -> void:
+	if _look.is_empty():
+		return
+	var o := _star_obs()
+	var dist := maxf(o.length(), 0.05)
+	var dir := -o / dist
+	sun_dir_world = dir
+	var size: float = _look.star_size
+	var rad := clampf(0.011 * size / (dist + 0.12), 0.0012, 0.2)
+	star_mat.set_shader_parameter("star_dir", dir)
+	star_mat.set_shader_parameter("star_rad", rad)
+	if _look.binary:
+		# the companion circles a little way off the star, in the system's plane
+		var a: float = _look.yaw * 3.0
+		var c := Vector3(cos(a), 0.0, sin(a)) * (0.03 + size * 0.012) - o
+		var cd := c.length()
+		var csize: float = _look.companion_size
+		star_mat.set_shader_parameter("comp_dir", c / cd)
+		star_mat.set_shader_parameter("comp_rad", clampf(0.011 * csize / (cd + 0.12), 0.001, 0.15))
+	else:
+		star_mat.set_shader_parameter("comp_rad", 0.0)
+	sun.global_basis = Basis.looking_at(-dir, Vector3.UP if absf(dir.y) < 0.98 else Vector3.RIGHT)
+	var light: float = _look.star_light
+	sun.light_energy = light * clampf(sqrt(0.55 / dist), 0.85, 1.25)
+	sun.light_angular_distance = clampf(rad_to_deg(rad) * 0.8, 0.15, 1.5)
+	if _atmo:
+		_atmo.set_shader_parameter("sun_dir", dir)
 
 
 ## A giant planet far off to the side of the action (tens of kilometres across, a hundred away), with an
@@ -1218,6 +1297,7 @@ func _make_planet(ptype: String, planet_seed: int) -> void:
 	am.set_shader_parameter("color", Color(pal[3]).lerp(Color(0.7, 0.75, 0.8), 0.5))
 	am.set_shader_parameter("sun_dir", sun_dir_world)
 	atmo.material_override = am
+	_atmo = am
 	atmo.scale = Vector3.ONE * 1.04
 	atmo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	node.add_child(atmo)
@@ -1459,7 +1539,7 @@ func _spawn_field(center: Vector3, sys: Dictionary, anomaly: bool, rng: RandomNu
 		world.add_child(a)
 		a.setup(roll[0], roll[1], amount, rng.randi(), size)
 	_spawn_pebbles(center, spread, rng, 3 if not anomaly else 6)
-	_spawn_clouds(center, spread, Game.CAT_COLORS[sys.cat], rng, 1 if not anomaly else 3)
+	_spawn_clouds(center, spread, rng, 1 if not anomaly else 3)
 
 
 ## Hundreds of small loose rocks (not mineable) filling out the field.
@@ -1482,9 +1562,11 @@ func _spawn_pebbles(center: Vector3, spread: float, rng: RandomNumberGenerator, 
 		world.add_child(mmi)
 
 
-## Big soft clouds of dust hanging in the field, tinted a little by the system's colour.
-func _spawn_clouds(center: Vector3, spread: float, tint: Color, rng: RandomNumberGenerator, mult := 1) -> void:
+## Big soft clouds of dust hanging in the field, glowing faintly in the colours of the system's nebulae.
+func _spawn_clouds(center: Vector3, spread: float, rng: RandomNumberGenerator, mult := 1) -> void:
+	var tints := [_look.c1, _look.c2, _look.c3]
 	for i in rng.randi_range(8, 13) * mult:
+		var tint: Color = tints[i % 3]
 		var m := StandardMaterial3D.new()
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -1493,7 +1575,7 @@ func _spawn_clouds(center: Vector3, spread: float, tint: Color, rng: RandomNumbe
 		m.cull_mode = BaseMaterial3D.CULL_DISABLED
 		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
 		m.albedo_texture = Models.soft_texture()
-		m.albedo_color = Color(Color(0.36, 0.32, 0.28).lerp(tint, 0.12), rng.randf_range(0.05, 0.1))
+		m.albedo_color = Color(Color(0.36, 0.32, 0.28).lerp(tint, 0.45), rng.randf_range(0.05, 0.1))
 		m.proximity_fade_enabled = true
 		m.proximity_fade_distance = 300.0
 		var q := QuadMesh.new()
@@ -2810,8 +2892,10 @@ func start_warp(loc_i: int) -> void:
 	var sys := current_sys()
 	var from: Vector2 = sys.locs[Game.current_loc].map_pos
 	var to: Vector2 = sys.locs[loc_i].map_pos
+	# (the system map's x and y are the world's x and z, so the star swings round as you cross the system)
 	_travel_to("warp", sys.locs[loc_i].name, WARP_CHARGE, WARP_BASE + from.distance_to(to) * WARP_PER_UNIT,
-		enter_location.bind(Game.current_system, loc_i, _arrival_spot(to - from)), Game.CAT_COLORS[sys.cat], to - from)
+		enter_location.bind(Game.current_system, loc_i, _arrival_spot(to - from)), Game.CAT_COLORS[sys.cat], to - from,
+		{"obs_to": Vector3(to.x, -_star_height(), to.y)})
 
 
 func try_gate(dest: int) -> void:
