@@ -540,7 +540,7 @@ func _process(delta: float) -> void:
 			_wormhole_armed = true
 
 	var loc: Dictionary = current_loc()
-	if loc.pirates and mode != "dead" and not Game.peaceful:
+	if loc.pirates and not loc.station and mode != "dead" and not Game.peaceful:
 		if _pirate_timer >= 0.0:
 			_pirate_timer -= delta
 			if _pirate_timer < 0.0:
@@ -1184,7 +1184,7 @@ func enter_location(sys_id: int, loc_i: int, spawn = null) -> void:
 		snap_camera()
 	_wormhole_armed = false
 
-	if loc.pirates:
+	if loc.pirates and not loc.station:
 		_pirate_timer = 1.5
 	if mode == "title":
 		return

@@ -170,6 +170,35 @@ func _run() -> void:
 	check(G.away_smelted == G.furnace_output() and absf(G.away_time - 3600.0) < 5.0,
 		"reported: %d materials in %d s away" % [G.away_smelted, G.away_time])
 
+	print("-- v12 world changes: no pirates at stations, rarer Wild stations and relics, no portable wormholes")
+	G.new_game()
+	var st := [0, 0, 0, 0]
+	var pirate_stations := 0
+	var relics := 0
+	var planets := [0, 0, 0, 0]
+	for s in G.systems:
+		for l in s.locs:
+			if l.kind == "planet":
+				planets[s.cat] += 1
+				if l.station:
+					st[s.cat] += 1
+					if l.pirates:
+						pirate_stations += 1
+			if l.relic:
+				relics += 1
+	check(pirate_stations == 0, "no pirates anywhere a station is (%d stations)" % (st[0] + st[1] + st[3]))
+	check(float(st[3]) / planets[3] < 0.05, "Wild stations are rare: %d of %d Wild planets (%.1f%%)" % [st[3], planets[3], 100.0 * st[3] / planets[3]])
+	check(relics < 150, "relics are rare: %d in the whole galaxy" % relics)
+	var pw: Dictionary = JSON.parse_string(good)
+	pw["game"] = 11
+	pw["portals"] = 3
+	pw["storage"] = {"portals": 2, "materials": {}, "spices": {}, "weapons": {}, "modules": {}, "cargo": {}, "probes": 0}
+	put(main, JSON.stringify(pw))
+	check(G.load_game() and G.portals == 0 and G.storage.portals == 0, "a v11 save loses its portable wormholes (carried 3, stored 2)")
+	pw["game"] = 12
+	put(main, JSON.stringify(pw))
+	check(G.load_game() and G.portals == 3 and G.storage.portals == 2, "...but a v12 save keeps any it picks up later")
+
 	print("-- relics come back a week after they're decoded")
 	var rl := [0, 0]
 	for s in G.systems:

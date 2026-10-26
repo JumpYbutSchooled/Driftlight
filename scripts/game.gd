@@ -7,7 +7,7 @@ signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 signal jettisoned(ore: String, q: int, n: int)  # cargo thrown out of the hold (main spawns it as loose chunks)
 
-const VERSION := 11  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 12  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots: your pilot, and a sandbox where everything is free (anyone can open it)
 const SLOTS := {"pilot": "driftlight_save.json", "sandbox": "driftlight_admin.json"}
@@ -1126,13 +1126,18 @@ func _gen_locations(sys: Dictionary, rng: RandomNumberGenerator) -> void:
 		loc.planet_type = PLANET_TYPES[rng.randi() % PLANET_TYPES.size()]
 		loc.seed = rng.randi()
 		loc.ore = rng.randf() < 0.6
-		loc.station = rng.randf() < [0.45, 0.3, 0.0, 0.12][cat]
-		loc.refinery = loc.station and rng.randf() < [0.85, 0.6, 0.0, 0.5][cat]
+		# Wild stations are rarer since v12 (12% -> 3%). The draws stay exactly as they were (the old, higher chance
+		# decides whether the refinery draw is made), so nothing else in the galaxy moves.
+		var st_draw := rng.randf()
+		var had_station: bool = st_draw < [0.45, 0.3, 0.0, 0.12][cat]
+		loc.station = st_draw < [0.45, 0.3, 0.0, 0.03][cat]
+		var rf_draw := rng.randf() if had_station else 1.0
+		loc.refinery = loc.station and rf_draw < [0.85, 0.6, 0.0, 0.5][cat]
 		loc.obelisk = rng.randf() < [0.0, 0.0, 0.2, 0.22][cat]  # offerings only out in red and Wild space
 		loc.spice = rng.randf() < [0.08, 0.15, 0.35, 0.25][cat]
 		loc.wreck = rng.randf() < [0.1, 0.2, 0.35, 0.45][cat]
-		loc.relic = rng.randf() < [0.0, 0.0, 0.06, 0.2][cat]  # ancient relics: deep space only
-		loc.pirates = rng.randf() < PIRATE_CHANCE[cat] and not (loc.station and cat < CAT_PURPLE)
+		loc.relic = rng.randf() < [0.0, 0.0, 0.004, 0.015][cat]  # ancient relics: deep space only, and very rare (v12)
+		loc.pirates = rng.randf() < PIRATE_CHANCE[cat] and not loc.station  # (never where there's a station)
 		sys.locs.append(loc)
 	if cat <= CAT_GREEN and not sys.locs.any(func(l): return l.station):
 		var l: Dictionary = sys.locs[rng.randi() % n]
@@ -1166,7 +1171,7 @@ func _gen_locations(sys: Dictionary, rng: RandomNumberGenerator) -> void:
 			loc.seed = rng.randi()
 			loc.pirates = true  # anomalies are always guarded by Sentinels
 			loc.wreck = rng.randf() < 0.5
-			loc.relic = rng.randf() < 0.4
+			loc.relic = rng.randf() < 0.03
 			anomalies.append({"sys": sys.id, "loc": sys.locs.size()})
 			sys.locs.append(loc)
 
@@ -2764,6 +2769,10 @@ func load_game() -> bool:
 			storage.modules.erase(k)
 	storage.probes = int(sd.get("probes", 0))
 	storage.portals = int(sd.get("portals", 0))
+	# v12 removed every portable wormhole (carried and stored): saves from an older game lose theirs here
+	if int(data.get("game", 0)) < 12:
+		portals = 0
+		storage.portals = 0
 	auto_store = bool(data.get("auto_store", true))
 	var h: Array = data.get("home", [0, 0])
 	if h.size() == 2 and int(h[0]) < systems.size() and int(h[1]) < systems[int(h[0])].locs.size() and \
@@ -2779,6 +2788,14 @@ func load_game() -> bool:
 				q.append([str(item[0]), int(item[1]), int(item[2])])
 		refineries[key] = {"name": str(r.get("name", "")), "queue": q, "progress": float(r.get("progress", 0.0)),
 			"output": _ints(r.get("output", {}))}
+		# (a furnace you've used stays, even if v12's rarer Wild stations would have removed its station)
+		var kp: PackedStringArray = str(key).split(":")
+		if kp.size() == 2 and int(kp[0]) < systems.size() and int(kp[1]) < systems[int(kp[0])].locs.size():
+			var kl: Dictionary = systems[int(kp[0])].locs[int(kp[1])]
+			if kl.kind == "planet" and not kl.station:
+				kl.station = true
+				kl.refinery = true
+				kl.pirates = false
 	# furnaces kept smelting while the game was closed (up to a week)
 	away_time = clampf(Time.get_unix_time_from_system() - float(data.get("saved_at", Time.get_unix_time_from_system())), 0.0, 604800.0)
 	var before := furnace_output()
