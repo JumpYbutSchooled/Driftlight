@@ -21,6 +21,26 @@ from mathutils.bvhtree import BVHTree
 sys.path.append(os.path.dirname(__file__))
 from common import *  # noqa: E402,F401,F403
 
+# Ships are sleek and smooth (the user disliked the old plated boxes: "they look like legos"): every hull piece
+# is a rounded, smooth-shaded loft (common.sleek), and every small block has its edges rounded right off.
+_block = box
+
+
+def box(name, size, loc=(0, 0, 0), material=None, bevel=0.0, rot=(0, 0, 0), parent=None, taper=None):
+    o = _block(name, size, loc, material, 0.0, rot, parent, taper)
+    m = o.modifiers.new("Round", "BEVEL")
+    m.width = min(size) * 0.16
+    m.segments = 2
+    m.limit_method = "NONE"
+    for poly in o.data.polygons:
+        poly.use_smooth = True
+    return o
+
+
+def plated(name, size, loc=(0, 0, 0), mats=None, parent=None, rot=(0, 0, 0), taper=None, p=3.2, **_kw):
+    """(No armour plating on ships: a smooth piece, squarer than a hull part.)"""
+    return sleek(name, size, loc, mats, parent, rot, taper, p=p, nose=min(size) * 0.3, tail=min(size) * 0.2)
+
 
 def shade(h, k):
     """A hex colour darkened (k < 1) or lightened (k > 1)."""
@@ -138,26 +158,37 @@ def side(sx):
 
 
 class Part:
-    """A (tapered) box: taper narrows the +Y end in x and z. For placing things on its surfaces."""
+    """A smooth hull piece (see common.sleek): taper narrows the +Y end in x and z, and the ends round off. For
+    placing things on its surfaces."""
 
     def __init__(self, w, l, h, x=0.0, y=0.0, z=0.0, taper=(1.0, 1.0)):
         self.w, self.l, self.h, self.x, self.y, self.z, self.taper = w, l, h, x, y, z, taper
         self.slope = w / 2 * (taper[0] - 1) / l
+        self.nose, self.tail = sleek_ends((w, l, h))
 
     def t(self, y):
         return min(1.0, max(0.0, (y - self.y) / self.l + 0.5))
 
+    def k(self, y):
+        return sleek_k(y - self.y, self.l, self.nose, self.tail)
+
     def hw(self, y):
-        return self.w / 2 * (1 + (self.taper[0] - 1) * self.t(y))
+        return self.w / 2 * (1 + (self.taper[0] - 1) * self.t(y)) * self.k(y)
 
     def hh(self, y):
-        return self.h / 2 * (1 + (self.taper[1] - 1) * self.t(y))
+        return self.h / 2 * (1 + (self.taper[1] - 1) * self.t(y)) * self.k(y)
+
+    def dip(self, y):
+        """How far the nose has dipped at y (see common.sleek's droop)."""
+        if y <= self.y:
+            return 0.0
+        return -self.h / 2 * (1 + (self.taper[1] - 1) * self.t(y)) * (1 - self.k(y)) * 0.45
 
     def top(self, y):
-        return self.z + self.hh(y)
+        return self.z + self.dip(y) + self.hh(y)
 
     def bottom(self, y):
-        return self.z - self.hh(y)
+        return self.z + self.dip(y) - self.hh(y)
 
     def side_x(self, sx, y):
         return self.x + sx * self.hw(y)
@@ -177,7 +208,7 @@ class Part:
 
 class Kit:
     """One ship under construction: its materials, the parts root, the turret mounts and engines on it,
-    and its overall bounds. Plates are big and seams light, so a hull reads as armour, not a grid."""
+    and its overall bounds. Hull pieces are smooth and rounded, two-tone, with no plating or greebles."""
 
     def __init__(self, sid, c_hull, c_acc, c_glass, pirate=False):
         self.sid = sid
@@ -227,12 +258,9 @@ class Kit:
                     self.lo = Vector(tuple(min(a, b) for a, b in zip(self.lo, p)))
                     self.hi = Vector(tuple(max(a, b) for a, b in zip(self.hi, p)))
 
-    def part(self, name, w, l, h, x=0.0, y=0.0, z=0.0, taper=(1.0, 1.0), mats=None, cell=None, chamfer=None, faces=None,
-             rot=(0, 0, 0), depth=None):
-        big = max(w, l)
-        plated(name, (w, l, h), (x, y, z), mats or self.P, self.body, rot=rot, taper=taper,
-               cell=cell or min(4.0, 0.9 + big * 0.06), rng=self.rng, depth=depth or (0.02 + big * 0.0015),
-               seam=0.025 + big * 0.0012, chamfer=min(w, h) * 0.08 if chamfer is None else chamfer, faces=faces)
+    def part(self, name, w, l, h, x=0.0, y=0.0, z=0.0, taper=(1.0, 1.0), mats=None, rot=(0, 0, 0), p=3.4, **_old):
+        """A smooth hull piece (common.sleek). (_old: the plating options the old kit took, ignored.)"""
+        sleek(name, (w, l, h), (x, y, z), mats or self.P, self.body, rot=rot, taper=taper, p=p)
         self.grow((x, y, z), (w / 2, l / 2, h / 2), rot)
         return Part(w, l, h, x, y, z, taper)
 
@@ -243,7 +271,13 @@ class Kit:
 
     def plate(self, name, pts, t, offset=0.0, plane="xy", mat_=None, x=0.0, rot=(0, 0, 0)):
         """A wing, fin or blade cut to an outline (see common.slab)."""
-        o = slab(name, pts, t, offset, plane, mat_ or self.hull, self.body, rot=rot, loc=(x, 0, 0), bevel=min(0.04, t * 0.3))
+        o = slab(name, pts, t, offset, plane, mat_ or self.hull, self.body, rot=rot, loc=(x, 0, 0))
+        b = o.modifiers.new("Round", "BEVEL")  # soft, rounded edges all round the outline
+        b.width = t * 0.45
+        b.segments = 3
+        b.limit_method = "ANGLE"
+        for poly in o.data.polygons:
+            poly.use_smooth = True
         for u, v in pts:
             p = (u + x, v, offset) if plane == "xy" else (offset + x, u, v)
             self.grow(p, (t, t, t), rot)
@@ -265,19 +299,12 @@ class Kit:
         """A nozzle whose housing meets the hull at y, pointing back (-Y): ribbed bell, heat fins, a glowing
         throat and a hot core."""
         nlen = nlen or r * 2.2
-        along_y(r * 1.4, nlen * 0.45, (x, y - nlen * 0.2 + 0.1, z), self.dark, parent=self.body, segs=16)
-        along_y(r * 1.25, nlen, (x, y - nlen / 2 + 0.1, z), self.bell, parent=self.body, segs=20, r2=r, caps=False)
-        along_y(r * 1.02, 0.1, (x, y - nlen * 0.3, z), self.dark, parent=self.body, segs=20)
-        for c in range(3):
-            f = 0.35 + c * 0.25
-            torus("rib", r * (1.0 + 0.25 * f) + 0.02, 0.04 + r * 0.03, (x, y - nlen * f + 0.1, z), self.dark,
-                  rot=(math.radians(90), 0, 0), parent=self.body, seg=20, ring=6)
-        if fins:
-            for k in range(4):
-                a = k * math.pi / 2 + math.pi / 4
-                box("heat_fin", (0.05 + r * 0.03, nlen * 0.4, r * 0.5),
-                    (x + math.cos(a) * r * 1.45, y - nlen * 0.15, z + math.sin(a) * r * 1.45), self.greeb, 0.0,
-                    rot=(0, -a + math.pi / 2, 0), parent=self.body)
+        # a smooth nacelle round the nozzle, flaring into a clean bell (no ribs or fins: ships are sleek)
+        sleek("nacelle", (r * 2.8, nlen * 0.7, r * 2.8), (x, y - nlen * 0.2 + 0.1, z), [self.hull2], self.body, p=2.0,
+              nose=nlen * 0.25, tail=r * 0.3, segs=24)
+        along_y(r * 1.25, nlen, (x, y - nlen / 2 + 0.1, z), self.bell, parent=self.body, segs=32, r2=r, caps=False)
+        torus("bell_lip", r * 1.25, 0.03 + r * 0.04, (x, y - nlen + 0.1, z), self.acc2, rot=(math.radians(90), 0, 0),
+              parent=self.body, seg=32, ring=8)
         along_y(r * 1.0, 0.08, (x, y - nlen * 0.34, z), self.eng, parent=self.body, segs=20)
         along_y(r * 0.42, nlen * 0.5, (x, y - nlen * 0.6, z), self.eng_core, parent=self.body, segs=12, r2=r * 0.12)
         self.engines.append((Vector((x, y - nlen + 0.1, z)), r))
@@ -313,13 +340,10 @@ class Kit:
     def cockpit(self, on, y, w, l, h, x=0.0):
         """A raised cockpit on top of part `on`: plated, with a raked windscreen and a glass roof panel."""
         base = on.top(y)
-        cb = self.part("cockpit", w, l, h, x=x, y=y, z=base + h / 2 - 0.05, taper=(0.8, 0.78), chamfer=h * 0.2)
-        box("windscreen", (w * 0.62, 0.07, h * 0.62), (x, y + l / 2 - h * 0.12, base + h * 0.5), self.glass, 0.0,
-            rot=(math.radians(-40), 0, 0), parent=self.body)
-        box("canopy_roof", (w * 0.5, l * 0.42, 0.05), (x, y + l * 0.08, cb.top(y + l * 0.08) + 0.02), self.glass, 0.0,
-            parent=self.body)
-        box("canopy_bar", (w * 0.04 + 0.03, l * 0.44, 0.06), (x, y + l * 0.08, cb.top(y + l * 0.08) + 0.04), self.dark, 0.0,
-            parent=self.body)
+        cb = self.part("cockpit", w, l, h, x=x, y=y, z=base + h / 2 - 0.05, taper=(0.8, 0.78))
+        # a smooth glass bubble set into its top, swept back
+        sleek("canopy", (w * 0.62, l * 0.75, h * 0.9), (x, y + l * 0.08, base + h * 0.62), [self.glass], self.body, p=2.0,
+              nose=l * 0.4, tail=l * 0.3, taper=(0.75, 0.7))
         return cb
 
     def glass_band(self, on, y, z, w, h):
@@ -356,25 +380,16 @@ class Kit:
         merge(dish, "radar_mesh").parent = dish
         spin(dish, "Z", period)
 
+    # The old kit scattered greebles (pipes, vents, blocks...) over decks, bellies and flanks. Sleek ships keep
+    # their surfaces clean, so these do nothing now (the designs still say where they'd go).
     def deck(self, part, y0, y1, count, scale, inset=0.85, kinds=None):
-        """Greebles over the top of `part` between y0 and y1."""
-        if y1 - y0 < 0.4 or count <= 0:
-            return
-        yc = (y0 + y1) / 2
-        self.g.patch(frame((part.x, yc, 0), *TOP), part.hw(yc) * 2 * inset, y1 - y0, count, scale,
-                     lift=lambda x, y: part.top(yc + y), kinds=kinds)
+        pass
 
     def belly(self, part, y0, y1, count, scale, inset=0.75):
-        if y1 - y0 < 0.4 or count <= 0:
-            return
-        yc = (y0 + y1) / 2
-        self.g.patch(frame((part.x, yc, 0), *BOTTOM), part.hw(yc) * 2 * inset, y1 - y0, count, scale,
-                     lift=lambda x, y: -part.bottom(yc - y), kinds=["tank", "pipes", "block", "hatch", "dome"])
+        pass
 
     def flanks(self, part, count, scale, z=None):
-        for sx in (-1, 1):
-            self.g.patch(part.side_frame(sx, part.y, part.z if z is None else z), part.l * 0.8, part.h * 0.45, count, scale,
-                         kinds=["pipes", "pipes", "vent", "hatch", "block"])
+        pass
 
     def portholes(self, part, y, z, length, rows, gap):
         for sx in (-1, 1):
@@ -383,7 +398,17 @@ class Kit:
 
     def container(self, x, y, z, w, l, h):
         c = self.rng.choice([self.A, self.P, self.D, [self.acc2, self.seam, self.acc]])
-        self.part("container", w, l, h, x=x, y=y, z=z, mats=c, cell=0.32, chamfer=0.05, depth=0.03)
+        # (cargo rides in smooth capsule tanks: a rack of boxes read as building blocks)
+        # round tanks filling the container's slot: side by side (or stacked) as its proportions allow, since one
+        # rounded piece the shape of a flat box reads as a pillow
+        n = max(1, round(max(w, h) / min(w, h)))
+        d = min(min(w, h), max(w, h) / n)
+        for i in range(n):
+            off = -max(w, h) / 2 + max(w, h) / n * (i + 0.5)
+            at = (x + off, y, z) if w >= h else (x, y, z + off)
+            sleek("container", (d * 0.96, l, d * 0.96), at, c, self.body, p=2.0, nose=min(l * 0.3, d * 0.5), tail=min(l * 0.2, d * 0.3),
+                  droop=0.0)
+        self.grow((x, y, z), (w / 2, l / 2, h / 2))
 
     # ---------------------------------------------------------------- finishing
 
@@ -1487,13 +1512,13 @@ def features(k, fx):
                     cyl("spike", H * 0.08 + 0.05, H * 0.6, (m.x + sx * m.hw(y) * 0.85, y, m.top(y) + H * 0.2), k.acc,
                         rot=(0, sx * 0.5, 0), parent=k.body, segs=6, r2=0.0)
         elif f == "prow_gun":
-            rr = H * 0.1 + 0.08
-            along_y(rr, L * 0.32, (0, m.front() + L * 0.14, -H * 0.05), k.gunm, parent=k.body, segs=14)
-            for c in range(5):
-                torus("coil", rr * 1.6, rr * 0.35, (0, m.front() + L * (0.02 + c * 0.05), -H * 0.05), k.acc2, rot=rx, parent=k.body,
-                      seg=16, ring=6)
-            box("muzzle_brake", (rr * 3.0, L * 0.03, rr * 3.0), (0, m.front() + L * 0.3, -H * 0.05), k.dark, 0.03, parent=k.body)
-            k.grow((0, m.front() + L * 0.16, 0), (rr * 2, L * 0.16, rr * 2))
+            # a slim rail-gun lance running out of the nose
+            rr = H * 0.07 + 0.06
+            zt = m.z + m.dip(m.front() - 0.01)
+            sleek("prow_gun", (rr * 2.2, L * 0.42, rr * 2.2), (0, m.front() + L * 0.03, zt), [k.gunm], k.body, p=2.0,
+                  nose=L * 0.1, tail=rr, droop=0.0)
+            torus("muzzle_ring", rr * 0.95, rr * 0.22, (0, m.front() + L * 0.12, zt), k.acc2, rot=rx, parent=k.body, seg=24, ring=8)
+            k.grow((0, m.front() + L * 0.12, zt), (rr * 1.2, L * 0.12, rr * 1.2))
         elif f == "dorsal_fin":
             for sx in (-1, 1):
                 k.plate("dorsal_fin", [(-L * 0.12, H * 0.45), (-L * 0.44, H * 0.45), (-L * 0.5, H * 0.45 + L * 0.2), (-L * 0.32, H * 0.45 + L * 0.2)],
