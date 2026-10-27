@@ -199,6 +199,42 @@ func _run() -> void:
 	put(main, JSON.stringify(pw))
 	check(G.load_game() and G.portals == 3 and G.storage.portals == 2, "...but a v12 save keeps any it picks up later")
 
+	print("-- Core nodes: a safe Core system with a station in every direction")
+	G.new_game()
+	var cn: Array = G.core_nodes
+	check(cn.size() == 24, "24 Core nodes (%d)" % cn.size())
+	var node_ok := true
+	var trunk := 0
+	for id in cn:
+		var s: Dictionary = G.systems[id]
+		node_ok = node_ok and s.cat == G.CAT_BLUE and s.locs[0].station and s.locs[0].refinery and s.locs.all(func(l): return not l.pirates)
+	check(node_ok, "each is Core category, with a station and refinery on its first planet and no pirates anywhere")
+	var from0: Array = G.find_path(0, cn[7])  # the inner ring's last node
+	check(from0.size() == 1, "an inner node is one jump from The Core")
+	var far: int = cn[cn.size() - 1]
+	check(G.find_path(0, far).size() <= 4, "even the farthest ring is %d jumps from The Core" % G.find_path(0, far).size())
+	var worst := 0
+	for s in G.systems:
+		var best := 999
+		for c in [0] + cn:
+			best = mini(best, 0 if c == s.id else G.find_path(c, s.id).size())
+		worst = maxi(worst, best)
+	check(worst <= 25, "no system is more than %d jumps from a Core station (it was over 50)" % worst)
+	G.current_system = cn[3]
+	check(G.respawn_point() == [cn[3], 0], "dying at a Core node rebuilds you there")
+	G.current_system = 0
+	G.current_system = G.systems[cn[0]].links.filter(func(l): return l != 0 and not cn.has(l))[0]
+	var rp: Array = G.respawn_point()
+	check(rp[0] == 0 or cn.has(rp[0]), "dying elsewhere rebuilds you at the nearest Core station (%s)" % G.systems[rp[0]].name)
+	# every gate points at a system that links back, and every link has its gate
+	var gates_ok := true
+	for s in G.systems:
+		for l in s.links:
+			gates_ok = gates_ok and G.systems[l].links.has(s.id) and G.gate_index(s.id, l) > 0 and \
+				s.locs[G.gate_index(s.id, l)].gate_to == l
+	check(gates_ok, "every stargate link has its gate at both ends")
+	G.current_system = 0
+
 	print("-- docking stores everything except probes")
 	G.new_game()
 	G.probes = 12

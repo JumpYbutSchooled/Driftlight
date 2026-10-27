@@ -3249,7 +3249,9 @@ func _respawn() -> void:
 	player.set_dead(false)
 	player.heal_full()
 	mode = "fly"
-	Game.home = [0, 0]  # a lost ship is always rebuilt at the Core's station, wherever it died
-	enter_location(0, 0)
-	Game.say("Your ship was rebuilt at the Core, at %s." % current_loc().name, Color("9fd3ff"))
+	# a lost ship is rebuilt at the nearest Core station: The Core, or the closest Core node, by jumps
+	var spot: Array = Game.respawn_point()
+	Game.home = spot
+	enter_location(spot[0], spot[1])
+	Game.say("Your ship was rebuilt at %s, at %s." % [current_sys().name if spot[0] != 0 else "the Core", current_loc().name], Color("9fd3ff"))
 	Game.save_game()

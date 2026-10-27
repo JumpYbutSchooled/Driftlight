@@ -933,7 +933,106 @@ func generate_galaxy() -> void:
 		_gen_locations(sys, rng)
 	_setup_core()
 	_pair_wormholes(rng)
+	_add_core_nodes()
 	gen_ms = Time.get_ticks_msec() - started
+
+
+const CORE_NODE_DIRS := ["East", "Southeast", "South", "Southwest", "West", "Northwest", "North", "Northeast"]
+const CORE_NODE_RINGS := [0.40, 0.66, 0.88]  # how far out each ring of Core nodes sits (share of the galaxy's radius)
+var core_nodes := []  # ids of the Core nodes, inner ring first (not counting The Core itself)
+
+
+## Core nodes: a safe Core system with a station and a refinery in every direction, at two distances (an inner
+## ring and one out near the rim), so the Core is never far. Each ring's nodes are joined to their neighbours,
+## each inner node to The Core and each outer node to the inner node in its direction, by long trunk gates.
+## This runs after the whole galaxy has been generated, with its own random numbers, and only adds: no
+## existing place changes its number, so saves still line up.
+func _add_core_nodes() -> void:
+	core_nodes = []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = GALAXY_SEED + 4242
+	var rings := []
+	for ri in CORE_NODE_RINGS.size():
+		var ring := []
+		for k in CORE_NODE_DIRS.size():
+			var want: Vector2 = Vector2.from_angle(TAU * k / CORE_NODE_DIRS.size()) * float(CORE_NODE_RINGS[ri]) * GALAXY_RADIUS
+			var best := -1
+			var bd := INF
+			for s in systems:
+				if s.id == 0 or core_nodes.has(s.id):
+					continue
+				var d: float = s.pos.distance_squared_to(want)
+				if d < bd:
+					bd = d
+					best = s.id
+			core_nodes.append(best)
+			ring.append(best)
+			_make_core_node(systems[best], ["", "Outer ", "Far "][ri] + CORE_NODE_DIRS[k] + " Core")
+		rings.append(ring)
+	# the trunk: Core -> inner ring -> outer ring, and a ring road round each ring
+	for k in CORE_NODE_DIRS.size():
+		_add_gate(0, rings[0][k], rng)
+		for ri in range(1, rings.size()):
+			_add_gate(rings[ri - 1][k], rings[ri][k], rng)
+		for ring in rings:
+			_add_gate(ring[k], ring[(k + 1) % ring.size()], rng)
+
+
+## A system turned into a Core node: Core category, renamed, no pirates anywhere, and a station with a refinery
+## on its first planet.
+func _make_core_node(sys: Dictionary, nm: String) -> void:
+	sys["core_node"] = true
+	sys.cat = CAT_BLUE
+	sys.name = nm
+	sys.initials = _initials(nm)
+	var roman := 0
+	for l in sys.locs:
+		if l.kind == "planet":
+			l.name = "%s %s" % [nm, ROMAN[roman]]
+			roman += 1
+		l.pirates = false
+	var first: Dictionary = sys.locs[0]
+	first.station = true
+	first.refinery = true
+	first.obelisk = false
+	first.wreck = false
+	# the gates that lead here, from the neighbours, carry its new name
+	for other in systems:
+		for l in other.locs:
+			if l.kind == "gate" and l.gate_to == sys.id:
+				l.name = "Stargate: %s" % nm
+
+
+## A new two-way stargate between a and b, added at the end of each system's locations.
+func _add_gate(a: int, b: int, rng: RandomNumberGenerator) -> void:
+	if a == b or systems[a].links.has(b):
+		return
+	_link(a, b)
+	for pair in [[a, b], [b, a]]:
+		var s: Dictionary = systems[pair[0]]
+		var o: Dictionary = systems[pair[1]]
+		var gate := _new_loc("gate", "Stargate: %s" % o.name, (o.pos - s.pos).normalized() * 1.08)
+		gate.gate_to = pair[1]
+		gate.seed = rng.randi()
+		s.locs.append(gate)
+
+
+## The nearest place a lost ship is rebuilt: the station of the Core, or of the closest Core node, by jumps from
+## where it was lost. Returns [system, location].
+func respawn_point() -> Array:
+	var seen := {current_system: true}
+	var queue := [current_system]
+	var i := 0
+	while i < queue.size():
+		var u: int = queue[i]
+		i += 1
+		if u == 0 or core_nodes.has(u):
+			return [u, 0]
+		for v in systems[u].links:
+			if not seen.has(v):
+				seen[v] = true
+				queue.append(v)
+	return [0, 0]
 
 
 ## Which region a system at galaxy-map position `p` (in ring `cat`) belongs to: its ring's sector by angle.

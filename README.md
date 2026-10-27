@@ -55,7 +55,7 @@ No spoilers - just the shape of it. (The same guide is in the game: press H.)
    autopilot fly it.
 8. **Keep your valuables in storage.** Every station shares one store, and whatever is in it is safe. If your
    ship is destroyed, everything it was carrying is lost - ore, materials, spare gear, spices. Docking stores
-   everything for you except your probes (you can turn that off). You're rebuilt at the Core's station, wherever you died.
+   everything for you except your probes (you can turn that off). You're rebuilt at the nearest Core station: The Core, or one of the 24 Core nodes (gold diamonds on the galaxy map) in every direction, each with a station, a refinery and no pirates, joined by long trunk gates so the Core is never far.
 
 The **Sandbox** (pick it on the title screen) is a separate save where everything is free, with god mode,
 peaceful space and spawning tools (F8) - for anyone who just wants to fly the big ships.

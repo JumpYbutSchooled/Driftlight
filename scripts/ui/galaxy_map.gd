@@ -205,7 +205,16 @@ func _draw() -> void:
 		draw_rect(Rect2(p - Vector2(sz, sz) / 2.0, Vector2(sz, sz)), c)
 		if s.visited:
 			draw_rect(Rect2(p - Vector2(sz + 6, sz + 6) / 2.0, Vector2(sz + 6, sz + 6)), c, false, 1.0)
-		if zoom > 1.3 or s.id == 0:
+		if s.get("core_node", false):
+			# a Core node: a gold diamond round it, and its name at most zooms
+			var dm := sz + 9.0
+			draw_colored_polygon(PackedVector2Array([p + Vector2(0, -dm), p + Vector2(dm, 0), p + Vector2(0, dm), p + Vector2(-dm, 0)]),
+				Color(UI.GOLD, 0.18))
+			draw_polyline(PackedVector2Array([p + Vector2(0, -dm), p + Vector2(dm, 0), p + Vector2(0, dm), p + Vector2(-dm, 0),
+				p + Vector2(0, -dm)]), Color(UI.GOLD, 0.9), 1.5)
+			if zoom > 0.3:
+				draw_string(font, p + Vector2(-80, dm + 14), s.name, HORIZONTAL_ALIGNMENT_CENTER, 160, 13, Color(UI.GOLD, 0.9))
+		elif zoom > 1.3 or s.id == 0:
 			draw_string(font, p + Vector2(-80, sz + 14), s.name, HORIZONTAL_ALIGNMENT_CENTER, 160, 13, Color(c, 0.85))
 	# region names
 	for ra in _region_at:
@@ -246,6 +255,8 @@ func _draw_top() -> void:
 		lines.append(("Visited" if h.visited else "Unexplored") + "  -  " + Game.system_look(h).star)
 		if reg.ore != "" and Game.regions_seen.has(h.region):
 			lines.append("Regional ore: %s" % Game.ORES[reg.ore].name)
+		if h.get("core_node", false):
+			lines.append("CORE NODE: safe, station and refinery, respawn point")
 		if hovered != Game.current_system:
 			lines.append("%d jumps away - click: route, shift-click: add a stop" % Game.find_path(Game.current_system, hovered).size())
 			if main.can_jump_drive(hovered):
