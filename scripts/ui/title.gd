@@ -17,7 +17,7 @@ var _buttons: VBoxContainer
 var _continue: Button
 var _slots: HBoxContainer  # pilot / sandbox save picker
 var _slot_btns := {}
-var _restart: Button
+var _gated := []  # the buttons that join a game: off while an update is downloading or installing
 var _save_code: Button  # (shown when there's a save to make a code from)
 var _help: PanelContainer
 var _help_text: RichTextLabel
@@ -45,15 +45,15 @@ func _ready() -> void:
 		b.tooltip_text = "Your career" if s == "pilot" else "Everything free, every tool - its own save, separate from your pilot"
 		_slots.add_child(b)
 		_slot_btns[s] = b
+		_gated.append(b)
 	_buttons.add_child(_slots)
-	_restart = _menu_button("Restart to update", func(): main.updater.restart(), "")
-	_restart.visible = false
 	_continue = _menu_button("Continue", func(): main.continue_game(), "gate")
-	_menu_button("New Game", _new_game, "ship")
+	_gated.append(_continue)
+	_gated.append(_menu_button("New Game", _new_game, "ship"))
 	_menu_button("Guide", _show_help.bind(UI.GUIDE), "star")
 	_menu_button("Controls", _show_help.bind(CONTROLS), "mission")
 	_save_code = _menu_button("Save Code", func(): main.code_panel.open_export(), "cargo")
-	_menu_button("Load Code", func(): main.code_panel.open_import(_after_code), "cargo")
+	_gated.append(_menu_button("Load Code", func(): main.code_panel.open_import(_after_code), "cargo"))
 	_menu_button("Quit", func(): get_tree().quit(), "skull")
 
 	var hc := CenterContainer.new()
@@ -98,6 +98,7 @@ func open() -> void:
 	_pick_slot(Game.save_slot)
 	_help.hide()
 	show()
+	main.updater.check()  # (every time you come back to the title: is there a newer version?)
 
 
 ## Pick the pilot or sandbox save: Continue and New Game then act on that slot.
@@ -126,7 +127,9 @@ func _new_game() -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
-	_restart.visible = main.updater.ready_version > 0
+	var updating: bool = main.updater.blocking()
+	for b in _gated:
+		b.disabled = updating
 	queue_redraw()
 
 
@@ -152,6 +155,16 @@ func _draw() -> void:
 		draw_string(UI.body, Vector2(0, y + 92), "Version 8 started everyone over - your old save was kept in the backups folder.",
 			HORIZONTAL_ALIGNMENT_CENTER, vs.x, 17, UI.GOLD)
 	var upd: String = main.updater.status
+	if main.updater.blocking():
+		# an update is coming in: nobody joins a game until it's installed (the game restarts by itself)
+		var bw := 560.0
+		var by := vs.y * 0.3 + 128.0
+		var frac: float = main.updater.progress if main.updater.state == "downloading" else 1.0
+		draw_string(UI.title, Vector2(0, by), "UPDATING TO v%d" % main.updater.version, HORIZONTAL_ALIGNMENT_CENTER, vs.x, 22, UI.GOLD)
+		draw_rect(Rect2((vs.x - bw) / 2.0, by + 14.0, bw, 4.0), Color(1, 1, 1, 0.12))
+		draw_rect(Rect2((vs.x - bw) / 2.0, by + 14.0, bw * frac, 4.0), UI.GOLD)
+		draw_string(UI.body, Vector2(0, by + 44.0), upd if upd != "" else "installing...", HORIZONTAL_ALIGNMENT_CENTER, vs.x, 17, Color(UI.TEXT, 0.85))
+		draw_string(UI.body, Vector2(0, by + 68.0), "Driftlight restarts by itself when it's done.", HORIZONTAL_ALIGNMENT_CENTER, vs.x, 15, UI.MUTED)
 	draw_string(UI.body, Vector2(30, vs.y - 26), "v%d" % Game.VERSION + ("   -   " + upd if upd != "" else ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
 		Color(UI.MUTED, 0.6))
 	var foot := "1,000 systems in 10 regions  -  %d ships  -  %d weapons  -  %d modules  -  %d achievements" % [Game.SHIPS.size(),

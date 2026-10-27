@@ -7,7 +7,7 @@ signal toast(title: String, text: String, icon: String, color: Color)
 signal saved
 signal jettisoned(ore: String, q: int, n: int)  # cargo thrown out of the hold (main spawns it as loose chunks)
 
-const VERSION := 15  # bump on every release: the auto-updater only installs a higher number
+const VERSION := 16  # bump on every release: the auto-updater only installs a higher number
 const REPO := "JumpYbutSchooled/Driftlight"
 # two save slots: your pilot, and a sandbox where everything is free (anyone can open it)
 const SLOTS := {"pilot": "driftlight_save.json", "sandbox": "driftlight_admin.json"}
@@ -938,17 +938,20 @@ func generate_galaxy() -> void:
 
 
 const CORE_NODE_DIRS := ["East", "Southeast", "South", "Southwest", "West", "Northwest", "North", "Northeast"]
-const CORE_NODE_RINGS := [0.40, 0.66, 0.88]  # how far out each ring of Core nodes sits (share of the galaxy's radius)
+const CORE_NODE_RINGS := [0.36, 0.47]  # how far out each ring of Core nodes sits (share of the galaxy's radius): all inside Secure space
 var core_nodes := []  # ids of the Core nodes, inner ring first (not counting The Core itself)
+var trunk_links := []  # [a, b] of each stargate that was added for the Core nodes (every other gate was always there)
 
 
-## Core nodes: a safe Core system with a station and a refinery in every direction, at two distances (an inner
-## ring and one out near the rim), so the Core is never far. Each ring's nodes are joined to their neighbours,
-## each inner node to The Core and each outer node to the inner node in its direction, by long trunk gates.
+## Core nodes: a safe Core system with a station and a refinery in every direction, at two distances (both inside
+## Secure space: none in Unsecure or Wild, which stay as hard to cross as they were), so the Core is never far.
+## Each ring's nodes are joined to their neighbours, each inner node to The Core and each outer node to the inner
+## node in its direction, by long trunk gates.
 ## This runs after the whole galaxy has been generated, with its own random numbers, and only adds: no
 ## existing place changes its number, so saves still line up.
 func _add_core_nodes() -> void:
 	core_nodes = []
+	trunk_links = []
 	var rng := RandomNumberGenerator.new()
 	rng.seed = GALAXY_SEED + 4242
 	var rings := []
@@ -959,15 +962,15 @@ func _add_core_nodes() -> void:
 			var best := -1
 			var bd := INF
 			for s in systems:
-				if s.id == 0 or core_nodes.has(s.id):
-					continue
+				if s.id == 0 or core_nodes.has(s.id) or s.cat > CAT_GREEN:
+					continue  # (never in Unsecure or Wild space: that stays as hard to cross as it was)
 				var d: float = s.pos.distance_squared_to(want)
 				if d < bd:
 					bd = d
 					best = s.id
 			core_nodes.append(best)
 			ring.append(best)
-			_make_core_node(systems[best], ["", "Outer ", "Far "][ri] + CORE_NODE_DIRS[k] + " Core")
+			_make_core_node(systems[best], ["", "Outer "][ri] + CORE_NODE_DIRS[k] + " Core")
 		rings.append(ring)
 	# the trunk: Core -> inner ring -> outer ring, and a ring road round each ring
 	for k in CORE_NODE_DIRS.size():
@@ -1008,6 +1011,7 @@ func _add_gate(a: int, b: int, rng: RandomNumberGenerator) -> void:
 	if a == b or systems[a].links.has(b):
 		return
 	_link(a, b)
+	trunk_links.append([a, b])
 	for pair in [[a, b], [b, a]]:
 		var s: Dictionary = systems[pair[0]]
 		var o: Dictionary = systems[pair[1]]

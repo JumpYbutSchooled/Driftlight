@@ -1,5 +1,5 @@
 extends CenterContainer
-## ESC menu: pauses the game. Resume, save, volume and control settings, quit to title or desktop.
+## ESC menu: pauses the game. Resume, save, volume and control settings, quit to the title.
 
 const UI = preload("res://scripts/ui/ui.gd")
 
@@ -59,10 +59,10 @@ func _ready() -> void:
 	_warn = warn
 	v.add_child(warn)
 	v.add_child(HSeparator.new())
-	for b in [["Save & Quit to Title", _to_title, "gate"], ["Quit to Desktop", _quit, "skull"]]:
-		var btn := UI.btn(b[0], b[1], b[2], UI.BAD if b[0].begins_with("Quit") else UI.TEXT)
-		btn.custom_minimum_size = Vector2(0, 52)
-		v.add_child(btn)
+	# (no Quit to Desktop in the game: leave through the title screen, which also checks for updates)
+	var title_btn := UI.btn("Save & Quit to Title", _to_title, "gate", UI.TEXT)
+	title_btn.custom_minimum_size = Vector2(0, 52)
+	v.add_child(title_btn)
 
 
 func open() -> void:
@@ -103,9 +103,3 @@ func _show_code() -> void:
 func _to_title() -> void:
 	close()
 	main.quit_to_title()
-
-
-func _quit() -> void:
-	Game.end_session()
-	Sfx.save_settings()
-	get_tree().quit()

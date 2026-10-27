@@ -18,6 +18,16 @@ func _ready() -> void:
 		dir = OS.get_user_data_dir()
 	if "--gallery" in OS.get_cmdline_user_args():
 		_gallery()
+	elif "--blocktest" in OS.get_cmdline_user_args():
+		_blocktest()
+	elif "--updatetest" in OS.get_cmdline_user_args():
+		var t: Node = load("res://tools/updatetest.gd").new()
+		add_child(t)
+		var path := ""
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--root="):
+				path = a.substr(7)
+		t.start(path)
 	elif "--docktest" in OS.get_cmdline_user_args():
 		_docktest()
 	elif "--gatetest" in OS.get_cmdline_user_args():
@@ -218,6 +228,38 @@ func _jumptest() -> void:
 	print("JUMPTEST camera turned %.2f deg and the aim %.2f deg across the arrival  %s" % [cam_turn, aim_turn,
 		"PASS" if cam_turn < 1.0 and aim_turn < 1.0 else "FAIL"])
 	print("JUMPTEST map gone afterwards: %s" % (not main.jump_map.visible))
+	get_tree().quit()
+
+
+## `-- --autoshot --blocktest`: while an update is downloading or installing the title won't let you join a game
+## (the buttons are off and Continue / New Game do nothing), and it's back to normal after.
+func _blocktest() -> void:
+	await _secs(1.5)
+	var u = main.updater
+	u.force_enabled = true
+	u._enabled = true  # (so its states count; it must not install anything: auto_install off)
+	u.auto_install = false
+	var gated: Array = main.title._gated
+	var ok := true
+	for state in ["idle", "downloading", "staged", "installing", "idle"]:
+		u.state = state
+		u.version = 99
+		await _secs(0.3)
+		var want_off: bool = state in ["downloading", "staged", "installing"]
+		var off: bool = gated.all(func(b): return b.disabled)
+		var on: bool = gated.all(func(b): return not b.disabled)
+		main.continue_game()
+		main.start_new_game()
+		var joined: bool = main.mode != "title"
+		var good: bool = (off if want_off else on) and (not joined if want_off else true)
+		print("BLOCKTEST update %-11s: join buttons %s, Continue/New Game %s  %s" % [state, "OFF" if off else "on",
+			"refused (stayed on the title)" if not joined else "joined a game", "PASS" if good else "FAIL"])
+		ok = ok and good
+		if joined:
+			main.quit_to_title()
+			await _secs(0.5)
+	print("BLOCKTEST: no pause-menu quit to desktop: %s" % (not main.pause.find_children("*", "Button", true, false).any(func(b): return b.text.begins_with("Quit to Desktop"))))
+	print("BLOCKTEST RESULT: %s" % ("passed" if ok else "FAILED"))
 	get_tree().quit()
 
 

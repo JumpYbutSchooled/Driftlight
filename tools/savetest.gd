@@ -202,7 +202,7 @@ func _run() -> void:
 	print("-- Core nodes: a safe Core system with a station in every direction")
 	G.new_game()
 	var cn: Array = G.core_nodes
-	check(cn.size() == 24, "24 Core nodes (%d)" % cn.size())
+	check(cn.size() == 16, "16 Core nodes (%d)" % cn.size())
 	var node_ok := true
 	var trunk := 0
 	for id in cn:
@@ -213,13 +213,22 @@ func _run() -> void:
 	check(from0.size() == 1, "an inner node is one jump from The Core")
 	var far: int = cn[cn.size() - 1]
 	check(G.find_path(0, far).size() <= 4, "even the farthest ring is %d jumps from The Core" % G.find_path(0, far).size())
+	# every Core node is inside Secure space (region 0-2: the Core, Verdant Reach, Amber Expanse): none in Unsecure or Wild
+	check(cn.all(func(id): return G.systems[id].region <= 2 and G.systems[id].depth < 0.56), "no Core node in Unsecure or Wild space")
 	var worst := 0
 	for s in G.systems:
+		if s.region > 2:
+			continue
 		var best := 999
 		for c in [0] + cn:
 			best = mini(best, 0 if c == s.id else G.find_path(c, s.id).size())
 		worst = maxi(worst, best)
-	check(worst <= 25, "no system is more than %d jumps from a Core station (it was over 50)" % worst)
+	check(worst <= 20, "no Core or Secure system is more than %d jumps from a Core station (it was 40+)" % worst)
+	# the trunk gates only join Core stations to each other: no stargate that wasn't there before touches Unsecure or Wild
+	var wild_untouched: bool = not G.trunk_links.is_empty()
+	for pair in G.trunk_links:
+		wild_untouched = wild_untouched and G.systems[pair[0]].region <= 2 and G.systems[pair[1]].region <= 2
+	check(wild_untouched, "none of the %d trunk gates added for the nodes touches an Unsecure or Wild system (Wild's own network is as it was)" % G.trunk_links.size())
 	G.current_system = cn[3]
 	check(G.respawn_point() == [cn[3], 0], "dying at a Core node rebuilds you there")
 	G.current_system = 0

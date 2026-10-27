@@ -12,9 +12,13 @@ prop modelled in Blender from scripts.
 2. Unzip it somewhere you can write to (your Desktop or Documents, not Program Files).
 3. Run `Driftlight.exe`. Windows may warn that the app is unrecognised: click *More info*, then *Run anyway*.
 
-The game **updates itself**: when you start it, it checks for a newer release, downloads it in the
-background, and installs it when you close the game (or straight away with *Restart to update* on the
-title screen). Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight`.
+The game **updates itself**: every time the title screen comes up (when you start it, and each time you
+quit back to it from the game) it checks for a newer release. If there is one it downloads it (retrying if
+the connection drops), you can't join a game while that's happening, and when it's ready Driftlight installs
+it and restarts by itself. The helper that swaps the files in retries if Windows or antivirus is holding one,
+and logs what it did to `update_log.txt` next to your saves; if an install ever fails the update is kept and
+tried again at the next start. There's no quit button inside the game: leave through *Save & Quit to Title*.
+Your saves live in `%APPDATA%\Godot\app_userdata\Driftlight`.
 
 **Backups.** Since v7 the game keeps dated copies of your save in the `backups` folder there: one each time
 you start and stop playing, and one every 10 minutes of play (the last 40 are kept). A save it can't use is
@@ -55,7 +59,7 @@ No spoilers - just the shape of it. (The same guide is in the game: press H.)
    autopilot fly it.
 8. **Keep your valuables in storage.** Every station shares one store, and whatever is in it is safe. If your
    ship is destroyed, everything it was carrying is lost - ore, materials, spare gear, spices. Docking stores
-   everything for you except your probes (you can turn that off). You're rebuilt at the nearest Core station: The Core, or one of the 24 Core nodes (gold diamonds on the galaxy map) in every direction, each with a station, a refinery and no pirates, joined by long trunk gates so the Core is never far.
+   everything for you except your probes (you can turn that off). You're rebuilt at the nearest Core station: The Core, or one of the 16 Core nodes (gold diamonds on the galaxy map) in every direction through Core and Secure space, each with a station, a refinery and no pirates, joined by long trunk gates. Unsecure and Wild space has none and is as hard to cross as ever.
 
 The **Sandbox** (pick it on the title screen) is a separate save where everything is free, with god mode,
 peaceful space and spawning tools (F8) - for anyone who just wants to fly the big ships.

@@ -398,7 +398,17 @@ func _notification(what: int) -> void:
 
 # ---------------------------------------------------------------- game flow
 
+## An update has been downloaded while you're playing (the check at start-up can finish after you've joined a
+## game): it installs when you go back to the title.
+func note_update_ready(v: int) -> void:
+	if mode != "title":
+		Game.toast.emit("UPDATE READY", "Driftlight v%d is downloaded. It installs when you go back to the title screen (or close the game)." % v,
+			"star", Color("8ee0a0"))
+
+
 func start_new_game() -> void:
+	if updater.blocking():
+		return  # (no joining a game while an update is coming in)
 	Game.keep_before_new_game()
 	Game.new_game()
 	if Game.sandbox:
@@ -411,6 +421,8 @@ func start_new_game() -> void:
 
 
 func continue_game() -> void:
+	if updater.blocking():
+		return  # (no joining a game while an update is coming in)
 	# a save that won't load is never replaced without asking (it stays in the backups folder either way)
 	if not Game.load_game():
 		if Game.save_too_new > 0:
